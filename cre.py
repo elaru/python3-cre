@@ -46,19 +46,19 @@ class EvaluationContext:
 
     @property
     def remaining_subject(self):
+        if self._progress >= len(self._subject):
+            raise ParsingOverflowException()
         return self._subject[self._progress:]
 
     @property
     def current_subject_character(self):
+        if self._progress >= len(self._subject):
+            raise ParsingOverflowException()
         return self._subject[self._progress]
 
     @property
     def matches(self):
         return self._matches
-
-    @matches.setter
-    def matches(self, value):
-        self._matches = value
 
     @property
     def flattened_matches(self):
@@ -91,112 +91,125 @@ class Expression:
         self._max_repetitions = max_repetitions
         self._greedy = greedy
         self._name = name
-        self._results = []
+        self._matches = []
 
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
 
-        Internally, dispatch the call depending on whether the
-        expression is greedy. If the expression matches and has a name,
-        update the context to store the last match.
+        Add every match result to self._matches for later use and update
+        the context progress. If the expression has a name, update the
+        context to store the last match.
         Return True if the expression matches, else False.
 
         """
-        matches = (self._matches_greedy(context) if self._greedy
-                   else self._matches_minimal(context))
-        if matches and self._name != None:
-            context.matches.setdefault(self._name, []) \
-            .append(self._results[-1][-1])
-        return matches
+        progress = context.progress
+        # Remember the progress in case we have to reset it because the
+        # expression did not match
+        matches = []
+        # Temporary list of results; append it to self._matches if the
+        # evaluation was successful
+        upper_limit = (self._min_repetitions,
+                       self._max_repetitions)[self._greedy]
+        # Try to match the expression up to upper_limit times
+
+        while (context.progress < len(context.subject)
+               and len(matches) < upper_limit):
+            match = self._matches_once(context)
+            if match is None:
+                break
+            matches.append(match)
+            context.progress = match["end"]
+
+        if len(matches) < self._min_repetitions:
+            # The expression couldn't match as often as specified: reset
+            # the context, discard the matches, return False
+            context.progress = progress
+            return False
+
+        self._matches.append(matches)
+        if self._name != None:
+            # If the expression was a numeric or named group, update
+            # the matched value on the context
+            m = {"start": self._matches[-1][-1]["start"]}
+            context.matches.setdefault(self._name, []).append(
+                _copykeys(self._matches[-1][-1], ("start", "end")))
+        return True
 
     def retry(self, context):
-        """Iterate the next repetition count."""
-        matches = (self._retry_greedy(context) if self._greedy
-                   else self._retry_minimal(context))
-        if self._name != None:
-            if matches:
-                context.matches[self._name][-1] = self._results[-1][-1]
-            else:
-                context.matches[self._name].pop()
-                if len(context.matches[self._name]) == 0:
+        """Reevaluate the expression with a different repetition.
+
+        This method is required for scenarios like:
+        pattern := "f\w+ar"
+        subject := "foobar"
+
+        In this case, the sequence expression "\w+" will match the
+        string "oobar" which causes the following character expression
+        "a" to fail. Now we have to iterate through the remaining match
+        variations of the sequence expression ("ooba", "oob", "oo", "o")
+        to find a combination that is valid for subsequent expressions.
+
+        This method performs a single iteration step. This includes
+        updating the context progress and, if the expression is named,
+        the context match dict.
+
+        Note that the iteration can be performed in two directions:
+        If the expression is greedy, it matches as many characters as
+        possible during the initial evaluation and we free parts of the
+        subject during reevaluation.
+        if the expression is non-greedy, it matches as few characters as
+        possible during the initial evaluation and we consume additional
+        parts of the subject during reevaluation.
+
+        Return True if reevaluation was successful and the new
+        repetition count is valid or False if the reevaluation
+        overflowed the repetition limits.
+
+        """
+        valid = False
+        if len(self._matches[-1]) == (self._max_repetitions,
+                                      self._min_repetitions)[self._greedy]:
+            # Already at repetition limit, don't iterate further; simply
+            # block the following elif conditions
+            pass
+        elif self._greedy:
+            # Expression is greedy, so iterate descending by
+            # removing the last match
+            context.progress = self._matches[-1].pop()["start"]
+            valid = True
+        else:
+            # Expression is not greedy, so iterate ascending
+            match = self._matches_once(context)
+            if match is not None:
+                # Expression matches, add new match to internal stack
+                self._matches[-1].append(match)
+                context.progress = match["end"]
+                valid = True
+
+        if valid:
+            if self._name is not None:
+                context.matches[self._name][-1] = _copykeys(
+                    self._matches[-1][-1], ("start", "end"))
+        else:
+            if len(self._matches[-1]):
+                context.progress = self._matches[-1][0]["start"]
+            self._matches.pop()
+            if self._name is not None:
+                del context.matches[self._name][-1]
+                if not len(context.matches[self._name]):
                     del context.matches[self._name]
-        return matches
 
-    def _matches_greedy(self, context):
-        """Call _matches_once up to _max_repetitions times.
-
-        Increase the context progress for each match.
-
-        The match will fail if _matches_once matches less often than
-        _min_repetitions times or if the remaining subject length is
-        zero.
-        If the match does not fail, add every match result to
-        self._results and return True. Else discard the results and
-        return False.
-
-        """
-        progress = context.progress
-        matches = []
-        while (context.progress < len(context.subject)
-               and len(matches) < self._max_repetitions):
-            match = self._matches_once(context)
-            if match is None:
-                break
-            matches.append(match)
-            context.progress = match["end"]
-
-        if len(matches) < self._min_repetitions:
-            context.progress = progress
-            return False
-        self._results.append(matches)
-        return True
-
-    def _matches_minimal(self, context):
-        """Call _matches_once up to _min_repetitions times."""
-        progress = context.progress
-        matches = []
-        while (context.progress < len(context.subject)
-               and len(matches) < self._min_repetitions):
-            match = self._matches_once(context)
-            if match is None:
-                break
-            matches.append(match)
-            context.progress = match["end"]
-        if len(matches) < self._min_repetitions:
-            context.progress = progress
-            return False
-        self._results.append(matches)
-        return True
-
-    def _retry_greedy(self, context):
-        """If this expression has a range of valid repetitions and the current
-        repetition count is higher than the minimum repetition count, free the
-        last consumed match and return True, else False.
-        """
-        if len(self._results[-1]) <= self._min_repetitions:
-            self._results.pop()
-            return False
-        m = self._results[-1].pop()
-        context.progress -= m["end"] - m["start"]
-        return True
-
-    def _retry_minimal(self, context):
-        """"""
-        if len(self._results[-1]) == self._max_repetitions:
-            self._results.pop()
-            return False
-        m = self._matches_once(context)
-        if match is None:
-            return False
-        self._results[-1].append(m)
-        subject.progress += m["end"] - m["start"]
+        return valid
 
     def _matches_once(self, context):
-        """Check whether the expression matches the subject inside the
+        """Evaluate the expression once without modifying state.
+
+        Check whether the expression matches the subject inside the
         context beginning at context.progress without evaluating
-        repetitions. Return None if the expression did not match, else a
-        dict with keys "start" and "end" pointing to the respective
-        indices in subject."""
+        repetitions. Return None if the expression did not match, else
+        a dict with keys "start" and "end" pointing to the respective
+        indices in subject.
+
+        """
         raise NotImplementedError()
 
 
@@ -214,31 +227,30 @@ class CharacterExpression(Expression):
 
 
 class CharacterRangeExpression(Expression):
-    """Represents a character range, like [a-z]. For a collection of ranges,
-    like [a-zA-Z], multiple range expressions are concatenated in a
-    GroupExpression."""
+    """Represents a character range, like [a-z]. For a collection of
+    ranges, like [a-zA-Z], multiple range expressions are concatenated
+    in a GroupExpression."""
 
     def __init__(self, start, end, **kwargs):
         super().__init__(**kwargs)
         self._start = start
         self._end = end
 
-    def _matches_once(context):
+    def _matches_once(self, context):
         if self._start <= context.current_subject_character <= self._end:
-            context.progress += 1
-            return {"start": context.progress - 1, "end": context.progress}
+            return {"start": context.progress, "end": context.progress + 1}
         return None
 
 
 class AnyOfOptionsExpression(Expression):
     """Represents a logical-or expression with two or more values.
 
-    This class will be instantiated for the following expression strings:
+    This class will be instantiated for
+    the following expression strings:
     * Two expressions concatenated with "|"
-    * Character groups like \w
-
-    The latter case will contain 16 options, because each value in the range
-    will be its own CharacterExpression instance.
+    * Character groups like "[abc]" or "\w", which will be
+      represented as an option group of  CharacterExpressions
+      or CharacterRangeExpressions.
 
     """
 
@@ -251,7 +263,9 @@ class AnyOfOptionsExpression(Expression):
         start = context.progress
         for o in self._options:
             if o.matches(context):
-                return {"start": start, "end": context.progress + 1}
+                return {"start": start,
+                        "end": context.progress,
+                        "matching_child": o}
         return None
 
 
@@ -263,24 +277,60 @@ class GroupExpression(Expression):
         self._children = children
 
     def _matches_once(self, context):
-        start = context.progress
-        # Handle the first expression in the group seperately because there is
-        # no previous expression that could be retried if the initial match
-        # fails.
-        if not self._children[0].matches(context):
+        """Execute all child expressions in order.
+
+        Iterate recursively over self._children to find a combination
+        that suffices the match conditions of all children. Look at the
+        following example:
+
+        pattern := "a+?a{1,3}b"
+        subject := "aaaaab"
+
+        Here, the expression "a+?" is evaluated first and consumes the
+        string "a". After that, the expression "a{1,3}" consumes the
+        string "aaa". Now the remaining subject is "ab", but the last
+        pattern matches "b".
+        Our approach to solve this is to reevaluate the expressions in
+        reverse order. We start with the last matching expression and
+        retry it until the next expression matches or all possibilities
+        failed. Then we retry the second last expression and start
+        reevaluating the last one, and so on.
+        Look at the following table; the ranges address the indices in
+        the subject:
+
+        iteration | "a+?" | "a{1,3}" | "b"
+            #0        -         -       -
+            #1        0         -       -
+            #2        0       1 - 3     -
+            #3        0       1 - 2     -
+            #4        0         1       -
+            #5      0 - 1       -       -
+            #6      0 - 1     2 - 4     -
+            #7      0 - 1     2 - 4     5
+
+        If the expression does not match, the iterative calls to retry
+        will automatically reset the child expressions.
+
+        """
+        def __match_one_child(child):
+            """Perform the actual recursion."""
+            current = self._children[child]
+            if not current.matches(context):
+                # Can't match, let previous expression retry
+                return False
+            if child == len(self._children) - 1:
+                # Reached last expression in the group, exit
+                return True
+            while not __match_one_child(child + 1):
+                if not current.retry(context):
+                    # Can't match, let previous expression retry
+                    return False
+            return True
+
+        if not __match_one_child(0):
             return None
-        for i in range(1, len(self._children) + 1):
-            current = self._children[i]
-            previous = self._children[i - 1]
-            can_retry = True
-            while can_retry:
-                if current.matches(context):
-                    continue
-                can_retry = previous.retry(context)
-            # We only arrive here if the current expression didn't match with
-            # any of the previous repetitions.
-            return None
-        return {"start": start, "end": context.progress + 1}
+        return {"start": self._children[0]._matches[-1][0]["start"],
+                "end": self._children[-1]._matches[-1][-1]["end"]}
 
 
 class BackReferenceExpression(Expression):
@@ -309,7 +359,7 @@ class Parser:
         if self._context is not None:
             raise Exception("Parser already in use!")
         self._context = EvaluationContext(pattern)
-        self.current = {"state": "unknown"}
+        self._current = {"state": "unknown"}
 
         while self._context.progress < len(pattern):
             getattr(self, "_parse_" + self._current["state"])()
@@ -320,7 +370,7 @@ class Parser:
         self._context = None
         return root
 
-    def _parse_unkown(self):
+    def _parse_unknown(self):
         """"""
         if self._context.current_subject_character == "\\":
             self._current = {"state": "escaped"}
@@ -331,14 +381,12 @@ class Parser:
             self._current = {"state": "group",
                              "closing_tag": ")"}
         else:
-            self._current = {
-                    "state": "character",
-                    "character": self._context.current_subject_character}
-        self._context.progress += 1
+            self._current = {"state": "character"}
 
     def _parse_character(self):
-        """Handle parsing when a simple character expression was detected."""
-        args = {"character": self._current["character"]}
+        """Handle parsing when a character expression was detected."""
+        args = {"character": self._context.current_subject_character}
+        self._context.progress += 1
         args.update(self._resolve_repetitions())
         self._pop_current()
         self._current["children"].append(CharacterExpression(**args))
@@ -384,18 +432,26 @@ class Parser:
                 "character": self._context.current_subject_character}
 
     def _resolve_repetitions(self):
-        """Read repetitions and greedy behaviour from the current position.
+        """Read repetitions and greed from the current position.
 
-        Return a dict with keys greedy, min_repetitions and max_repetitions,
-        like the named parameters for Expression, filled with resolved or
-        default values.
+        Return a dict with keys greedy, min_repetitions and
+        max_repetitions, like the named parameters for Expression,
+        filled with resolved or default values.
 
         todo: handle repetitions indications like {1,} or {5}
 
         """
         minimum, maximum, greedy = 1, 1, True
         inf = float("inf")
-        if self._context.current_subject_character == "+":
+        progress = self._context.progress
+
+        if self._context.progress >= len(self._context._subject):
+            # The caller already consumed the remaining subject; don't
+            # read any further.
+            return {"min_repetitions": minimum,
+                    "max_repetitions": maximum,
+                    "greedy": greedy}
+        elif self._context.current_subject_character == "+":
             minimum = 1
             maximum = inf
             self._context.progress += 1
@@ -408,7 +464,8 @@ class Parser:
             maximum = inf
             self._context.progress += 1
         else:
-            # expression object for pattern "{\d+,\d+}"
+            # expression object for pattern "{(?P<min>\d)+,(?P<max>\d)+}"
+            # todo: change to pattern "{(?P<min>\d+),(?P<max>\d+)}"
             if GroupExpression((CharacterExpression(character="{"),
                                 CharacterRangeExpression(start="0", end="9",
                                     name="min", max_repetitions=inf),
@@ -416,16 +473,20 @@ class Parser:
                                 CharacterRangeExpression(start="0", end="9",
                                     name="max", max_repetitions=inf),
                                 CharacterExpression("}"))
-            ).matches():
+            ).matches(self._context):
                 minimum = int(self._context.get_match_string("min"))
                 maximum = int(self._context.get_match_string("max"))
 
-        if minimum is not None and self._context.current_subject_character == "?":
-                greedy = False
-                self._context.progress += 1
+        if (self._context.progress < len(self._context._subject)
+                and self._context.current_subject_character == "?"
+                and progress != self._context.progress):
+            greedy = False
+            self._context.progress += 1
+
         return {"min_repetitions": minimum,
                 "max_repetitions": maximum,
                 "greedy": greedy}
+
 
 def matches(pattern, string, flags=0):
     p = Parser()
@@ -435,8 +496,12 @@ def matches(pattern, string, flags=0):
         return c.flattened_matches
     return None
 
-def main():
-    print("main")
 
-if __name__ == "__main__":
-    main()
+class ParsingOverflowException(Exception):
+    """Raised if one tries to read beyond the length of the subject."""
+
+
+def _copykeys(d, k):
+    """Copy key value pairs k from d into a new dict."""
+    return dict(map(lambda x: (x, d[x]), k))
+
