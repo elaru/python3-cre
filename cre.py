@@ -165,40 +165,59 @@ class Expression:
         overflowed the repetition limits.
 
         """
-        valid = False
-        if len(self._matches[-1]) == (self._max_repetitions,
-                                      self._min_repetitions)[self._greedy]:
-            # Already at repetition limit, don't iterate further; simply
-            # block the following elif conditions
-            pass
-        elif self._greedy:
-            # Expression is greedy, so iterate descending by
-            # removing the last match
-            context.progress = self._matches[-1].pop()["start"]
-            valid = True
-        else:
-            # Expression is not greedy, so iterate ascending
-            match = self._matches_once(context)
-            if match is not None:
-                # Expression matches, add new match to internal stack
-                self._matches[-1].append(match)
-                context.progress = match["end"]
-                valid = True
+        valid = ((self._retry__match_again,
+                  self._retry__free_last_match)[self._greedy])(context)
 
-        if valid:
-            if self._name is not None:
-                context.matches[self._name][-1] = _copykeys(
-                    self._matches[-1][-1], ("start", "end"))
-        else:
+        if not valid:
             if len(self._matches[-1]):
+                # Reset the context progress; if self._matches is empty,
+                # the expression matched an empty string and didn't
+                # consume any characters that needed to be freed.
                 context.progress = self._matches[-1][0]["start"]
             self._matches.pop()
             if self._name is not None:
-                del context.matches[self._name][-1]
+                context.matches[self._name].pop()
                 if not len(context.matches[self._name]):
                     del context.matches[self._name]
 
+        elif self._name is not None:
+            context.matches[self._name][-1] = _copykeys(
+                self._matches[-1][-1], ("start", "end"))
+
         return valid
+
+    def _retry__free_last_match(self, context):
+        """Try to undo the last match.
+
+        Helper method for retry(). Remove the last match from internal
+        stack and reassign the consumed characters to the context.
+
+        Return True if the operation was successful or False if an
+        error occured, e.g. because the expression already matched
+        _min_repetitions times.
+
+        """
+        if len(self._matches[-1]) == self._min_repetitions:
+            return False
+        context.progress = self._matches[-1].pop()["start"]
+        return True
+
+    def _retry__match_again(self, context):
+        """Try to match one additional time.
+
+        Helper method for retry(). Execute _matches_once() and append
+        the result the internal stack or return False.
+
+        """
+        if len(self._matches[-1]) == self._max_repetitions:
+            return False
+        match = self._matches_once(context)
+        if match is not None:
+            # Expression matches, add new match to internal stack
+            self._matches[-1].append(match)
+            context.progress = match["end"]
+            return True
+        return False
 
     def _matches_once(self, context):
         """Evaluate the expression once without modifying state.
