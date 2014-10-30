@@ -223,6 +223,17 @@ class TestGroupExpression(unittest.TestCase):
         self.assertEqual(self.e._children[2]._matches, [])
         self.assertEqual(self.e._matches, [])
 
+    def test_retry_resets_children_on_failure(self):
+        self.e._children[0]._matches_once = Mock(side_effect=({"start": 0, "end": 1}, {"start": 0, "end": 1}, None, None))
+        self.e._children[1]._matches_once = Mock(side_effect=({"start": 1, "end": 2}, {"start": 1, "end": 2}, None))
+        self.e._children[2]._matches_once = Mock(side_effect=({"start": 2, "end": 3}, None))
+        self.e.matches(self.c)
+        self.assertEqual(self.e.retry(self.c), False)
+        self.assertEqual(self.e._children[0]._matches, [])
+        self.assertEqual(self.e._children[1]._matches, [])
+        self.assertEqual(self.e._children[2]._matches, [])
+        self.assertEqual(self.e._matches, [])
+
 
 class TestParser(unittest.TestCase):
 

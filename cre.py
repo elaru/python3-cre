@@ -93,6 +93,12 @@ class Expression:
         self._name = name
         self._matches = []
 
+    def _pop_last_repetition(self):
+        return self._matches[-1].pop()
+
+    def _pop_last_match(self):
+        return self._matches.pop()
+
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
 
@@ -189,12 +195,12 @@ class Expression:
     def _retry__free_last_match(self, context):
         """Try to undo the last match.
 
-        Helper method for retry(). Remove the last match from internal
-        stack and reassign the consumed characters to the context.
-
-        Return True if the operation was successful or False if an
-        error occured, e.g. because the expression already matched
-        _min_repetitions times.
+        Helper method for retry().
+        If the expression allows for fewer repetitions, remove the last
+        match from internal stack, reassign the consumed characters to
+        the context and return True.
+        If the expression already matches as few times as allowed,
+        return False and let retry take care of the stack.
 
         """
         if len(self._matches[-1]) == self._min_repetitions:
@@ -205,8 +211,10 @@ class Expression:
     def _retry__match_again(self, context):
         """Try to match one additional time.
 
-        Helper method for retry(). Execute _matches_once() and append
-        the result the internal stack or return False.
+        Helper method for retry().
+        Execute _matches_once(). If the expression matches again and has
+        not yet matched as often as allowed, return True, else return
+        False.
 
         """
         if len(self._matches[-1]) == self._max_repetitions:
@@ -346,10 +354,60 @@ class GroupExpression(Expression):
                     return False
             return True
 
-        if not __match_one_child(0):
-            return None
-        return {"start": self._children[0]._matches[-1][0]["start"],
+        if __match_one_child(0):
+            return {"start": self._children[0]._matches[-1][0]["start"],
+                    "end": self._children[-1]._matches[-1][-1]["end"]}
+        return None
+
+    def _retry__free_last_match(self, context):
+        """Retry children before proeeding with the default behaviour."""
+        def __retry_one_child(child):
+            """Retry children in reverse order.
+
+            Retry the last child first. If that fails, retry the
+            previous child and match the last one. If the previous
+            child fails, retry the third last one and match the
+            second last one again, and so on.
+
+            """
+            if child < 0:
+                return False
+            current = self._children[child]
+            if current.retry(context):
+                return True
+            while __retry_one_child(child - 1):
+                if current.matches(context):
+                    return True
+            return False
+
+        if len(self._matches[-1]) == 0:
+            # Abort prematurely so we don't retry child matches that
+            # don't belong to this repetition.
+            return False
+        if __retry_one_child(len(self._children) - 1):
+            # Next, try to find another combination of child matches
+            # without decreasing the repetitions.
+            self._matches[-1][-1] = {
+                "start": self._children[0]._matches[-1][0]["start"],
                 "end": self._children[-1]._matches[-1][-1]["end"]}
+            return True
+        else:
+            self._pop_last_repetition()
+        if len(self._matches[-1]) == self._min_repetitions:
+            return False
+        context.progress = self._matches[-1].pop()["start"]
+        return True
+
+    def _retry__match_again(self, context):
+        if len(self._matches[-1]) == self._max_repetitions:
+            return False
+        match = self._matches_once(context)
+        if match is not None:
+            # Expression matches, add new match to internal stack
+            self._matches[-1].append(match)
+            context.progress = match["end"]
+            return True
+        return False
 
 
 class BackReferenceExpression(Expression):
