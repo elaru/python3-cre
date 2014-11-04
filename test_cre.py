@@ -42,7 +42,7 @@ class TestRepetitionBehaviourWithCharacterExpression(unittest.TestCase):
             [{"start": 4, "end": 5}]
         ])
 
-    def test_matches_minimal_stores_all_results_for_later_use(self):
+    def test_matches_nongreedy_stores_all_results_for_later_use(self):
         self.c._subject = "a" * 5
         e = cre.CharacterExpression("a", min_repetitions=2,
                                     max_repetitions=2)
@@ -77,7 +77,7 @@ class TestRepetitionBehaviourWithCharacterExpression(unittest.TestCase):
         self.assertEqual(e.retry(self.c), False)
         self.assertEqual(self.c._matches, {})
 
-    def test_retry_minimal_iterates_up_to_max_repetitions(self):
+    def test_retry_nongreedy_iterates_up_to_max_repetitions(self):
         e = cre.CharacterExpression("a", min_repetitions=1,
                                     max_repetitions=3,
                                     greedy=False, name="foo")
@@ -233,6 +233,12 @@ class TestGroupExpression(unittest.TestCase):
         self.assertEqual(self.e._children[1]._matches, [])
         self.assertEqual(self.e._children[2]._matches, [])
         self.assertEqual(self.e._matches, [])
+
+    def test_super_complicated_iteration(self):
+        """
+        subject := "abababcabc"
+        pattern := "^(ab)*(abc?ab)+(abc)+$"
+        """
 
 
 class TestParser(unittest.TestCase):

@@ -26,8 +26,10 @@ class EvaluationContext:
     def __init__(self, subject):
         # Number of parsed characters; changed by expressions during evaluation
         self._progress = 0
+
         # String that is being parsed
         self._subject = subject
+
         # Matches of capturing groups; used by BackReferenceExpressions and
         # returned as the result of successful matching operation.
         self._matches = {}
@@ -59,6 +61,17 @@ class EvaluationContext:
     @property
     def matches(self):
         return self._matches
+
+    def push_match(self, name, value):
+        self._matches.setdefault(name, []).append(value)
+
+    def override_match(self, name, value):
+        self._matches[name][-1] = value
+
+    def pop_match(self, name):
+        self._matches[name].pop()
+        if not len(self._matches[name]):
+            del self._matches[name]
 
     @property
     def flattened_matches(self):
@@ -93,11 +106,13 @@ class Expression:
         self._name = name
         self._matches = []
 
-    def _pop_last_repetition(self):
-        return self._matches[-1].pop()
+    @property
+    def _current_match(self):
+        return self._matches[-1]
 
-    def _pop_last_match(self):
-        return self._matches.pop()
+    @property
+    def _current_repetition(self):
+        return self._current_match[-1]
 
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
@@ -108,15 +123,17 @@ class Expression:
         Return True if the expression matches, else False.
 
         """
-        progress = context.progress
         # Remember the progress in case we have to reset it because the
         # expression did not match
-        matches = []
+        progress = context.progress
+
         # Temporary list of results; append it to self._matches if the
         # evaluation was successful
+        matches = []
+
+        # Try to match the expression up to upper_limit times
         upper_limit = (self._min_repetitions,
                        self._max_repetitions)[self._greedy]
-        # Try to match the expression up to upper_limit times
 
         while (context.progress < len(context.subject)
                and len(matches) < upper_limit):
@@ -136,9 +153,8 @@ class Expression:
         if self._name != None:
             # If the expression was a numeric or named group, update
             # the matched value on the context
-            m = {"start": self._matches[-1][-1]["start"]}
-            context.matches.setdefault(self._name, []).append(
-                _copykeys(self._matches[-1][-1], ("start", "end")))
+            context.push_match(self._name, _copykeys(
+                            self._current_repetition, ("start", "end")))
         return True
 
     def retry(self, context):
@@ -159,7 +175,7 @@ class Expression:
         the context match dict.
 
         Note that the iteration can be performed in two directions:
-        If the expression is greedy, it matches as many characters as
+        If the expression is greedy, it consumes as many characters as
         possible during the initial evaluation and we free parts of the
         subject during reevaluation.
         if the expression is non-greedy, it matches as few characters as
@@ -168,63 +184,67 @@ class Expression:
 
         Return True if reevaluation was successful and the new
         repetition count is valid or False if the reevaluation
-        overflowed the repetition limits.
+        failed, for example because it overflowed the repetition
+        limits.
 
         """
-        valid = ((self._retry__match_again,
-                  self._retry__free_last_match)[self._greedy])(context)
+        # These methods return True if the expression could be
+        # reevaluated, or False otherwise. The methods already
+        # update self._matches and the context progress.
+        valid = ((self._retry__iterate_nongreedy,
+                  self._retry__iterate_greedy)[self._greedy])(context)
 
         if not valid:
-            if len(self._matches[-1]):
-                # Reset the context progress; if self._matches is empty,
-                # the expression matched an empty string and didn't
-                # consume any characters that needed to be freed.
-                context.progress = self._matches[-1][0]["start"]
-            self._matches.pop()
-            if self._name is not None:
-                context.matches[self._name].pop()
-                if not len(context.matches[self._name]):
-                    del context.matches[self._name]
-
+            self.undo(context)
         elif self._name is not None:
-            context.matches[self._name][-1] = _copykeys(
-                self._matches[-1][-1], ("start", "end"))
+            # Update the context if this is a named group.
+            context.override_match(self._name,
+                        _copykeys(self._current_repetition, ("start", "end")))
 
         return valid
 
-    def _retry__free_last_match(self, context):
+    def undo(self, context):
+        """Undo the last match with all repetitions."""
+        if len(self._current_match):
+            context.progress = self._current_match[0]["start"]
+        if self._name is not None:
+            context.pop_match(self._name)
+        self._matches.pop()
+
+    def _retry__iterate_greedy(self, context):
         """Try to undo the last match.
 
-        Helper method for retry().
+        Helper method for retry(); Execute a single repetition iteration
+        with greedy behaviour.
         If the expression allows for fewer repetitions, remove the last
         match from internal stack, reassign the consumed characters to
         the context and return True.
-        If the expression already matches as few times as allowed,
-        return False and let retry take care of the stack.
+        If the expression already matches as few times as allowed, drop
+        the matches and return False.
 
         """
-        if len(self._matches[-1]) == self._min_repetitions:
-            return False
-        context.progress = self._matches[-1].pop()["start"]
-        return True
+        if len(self._current_match) > self._min_repetitions:
+            context.progress = self._current_match.pop()["start"]
+            return True
+        return False
 
-    def _retry__match_again(self, context):
+    def _retry__iterate_nongreedy(self, context):
         """Try to match one additional time.
 
-        Helper method for retry().
+        Helper method for retry(); Execute a single repetition iteration
+        with nongreedy behaviour.
         Execute _matches_once(). If the expression matches again and has
         not yet matched as often as allowed, return True, else return
         False.
 
         """
-        if len(self._matches[-1]) == self._max_repetitions:
-            return False
-        match = self._matches_once(context)
-        if match is not None:
-            # Expression matches, add new match to internal stack
-            self._matches[-1].append(match)
-            context.progress = match["end"]
-            return True
+        if len(self._matches[-1]) < self._max_repetitions:
+            match = self._matches_once(context)
+            if match is not None:
+                # Expression matches, add new match to internal stack
+                self._matches[-1].append(match)
+                context.progress = match["end"]
+                return True
         return False
 
     def _matches_once(self, context):
@@ -359,8 +379,8 @@ class GroupExpression(Expression):
                     "end": self._children[-1]._matches[-1][-1]["end"]}
         return None
 
-    def _retry__free_last_match(self, context):
-        """Retry children before proeeding with the default behaviour."""
+    def _retry__iterate_greedy(self, context):
+        """Retry children before proceeding with the default behaviour."""
         def __retry_one_child(child):
             """Retry children in reverse order.
 
@@ -380,22 +400,32 @@ class GroupExpression(Expression):
                     return True
             return False
 
-        if len(self._matches[-1]) == 0:
+        if len(self._current_matches) == 0:
             # Abort prematurely so we don't retry child matches that
-            # don't belong to this repetition.
+            # don't belong to this match.
+            self._matches.pop()
             return False
         if __retry_one_child(len(self._children) - 1):
             # Next, try to find another combination of child matches
             # without decreasing the repetitions.
-            self._matches[-1][-1] = {
+            self._current_repetition = {
                 "start": self._children[0]._matches[-1][0]["start"],
                 "end": self._children[-1]._matches[-1][-1]["end"]}
             return True
         else:
-            self._pop_last_repetition()
-        if len(self._matches[-1]) == self._min_repetitions:
+            # __retry_one_child already ran until the child expressions
+            # didn't match anymore. During this execution they already
+            # discarded their last match, which means we only have to
+            # clean up this object itself.
+            self._current_match.pop()
+        if len(self._matches[-1]) < self._min_repetitions:
+            # If we arrive here, the expression matches less than
+            # _min_repetitions times. Clean up this object and all
+            # children.
+            for c in self._children:
+                pass
+            self._matches.pop()
             return False
-        context.progress = self._matches[-1].pop()["start"]
         return True
 
     def _retry__match_again(self, context):
