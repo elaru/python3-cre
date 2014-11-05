@@ -1,7 +1,5 @@
 #!/usr/local/bin/python3
-
-"""
-cre - custom regular expressions
+"""cre - custom regular expressions
 
 This module provides a custom regex implementation I wrote to get a
 better understanding of regular expressions. It aims to support the
@@ -15,6 +13,8 @@ Expression and Parser classes.
 - Philipp Schiffmann
 
 """
+
+import unicodedata
 
 
 class EvaluationContext:
@@ -114,6 +114,10 @@ class Expression:
     def _current_repetition(self):
         return self._current_match[-1]
 
+    @_current_repetition.setter
+    def _current_repetition(self, v):
+        self._currnet_match[-1] = v
+
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
 
@@ -191,17 +195,16 @@ class Expression:
         # These methods return True if the expression could be
         # reevaluated, or False otherwise. The methods already
         # update self._matches and the context progress.
-        valid = ((self._retry__iterate_nongreedy,
-                  self._retry__iterate_greedy)[self._greedy])(context)
-
-        if not valid:
+        if not ((self._retry__iterate_nongreedy,
+                 self._retry__iterate_greedy)[self._greedy])(context):
             self.undo(context)
-        elif self._name is not None:
+            return False
+
+        if self._name is not None:
             # Update the context if this is a named group.
             context.override_match(self._name,
                         _copykeys(self._current_repetition, ("start", "end")))
-
-        return valid
+        return True
 
     def undo(self, context):
         """Undo the last match with all repetitions."""
@@ -212,7 +215,7 @@ class Expression:
         self._matches.pop()
 
     def _retry__iterate_greedy(self, context):
-        """Try to undo the last match.
+        """Try to undo the last iteration.
 
         Helper method for retry(); Execute a single repetition iteration
         with greedy behaviour.
@@ -361,13 +364,13 @@ class GroupExpression(Expression):
         """
         def __match_one_child(child):
             """Perform the actual recursion."""
+            if child >= len(self._children):
+                # Reached the end of child list, exit
+                return True
             current = self._children[child]
             if not current.matches(context):
                 # Can't match, let previous expression retry
                 return False
-            if child == len(self._children) - 1:
-                # Reached last expression in the group, exit
-                return True
             while not __match_one_child(child + 1):
                 if not current.retry(context):
                     # Can't match, let previous expression retry
@@ -375,21 +378,34 @@ class GroupExpression(Expression):
             return True
 
         if __match_one_child(0):
-            return {"start": self._children[0]._matches[-1][0]["start"],
-                    "end": self._children[-1]._matches[-1][-1]["end"]}
+            return {"start": self._children[0]._current_match[0]["start"],
+                    "end": self._children[-1]._current_repetition["end"]}
         return None
 
     def _retry__iterate_greedy(self, context):
-        """Retry children before proceeding with the default behaviour."""
+        """Retry children, then retry repetitons, then pop repetitions.
+
+        There are multiple strategies to find another valid match for
+        a group expression. They are tried in this order:
+
+        #1  Retry the last repetition. To retry a repetition, we retry
+            all child expressions in order, beginning with the last one.
+        #2  If the last repetition couldn't be retried anymore, retry
+            the second last repetition, then match the last one again.
+            Proceed with the remaining repetitions.
+        #3  If we can't find a match with the same amount of repetitions
+            free the last repetition - as we undid all repetitions in
+            the previous step, simply call _matches_once until we have
+            reached the previous repetition count minus 1.
+
+        """
+        if len(self._current_match) == 0:
+            # Abort prematurely so we don't retry child matches that
+            # don't belong to this match.
+            return False
+
         def __retry_one_child(child):
-            """Retry children in reverse order.
-
-            Retry the last child first. If that fails, retry the
-            previous child and match the last one. If the previous
-            child fails, retry the third last one and match the
-            second last one again, and so on.
-
-            """
+            """Retry children in reverse order."""
             if child < 0:
                 return False
             current = self._children[child]
@@ -400,44 +416,38 @@ class GroupExpression(Expression):
                     return True
             return False
 
-        if len(self._current_matches) == 0:
-            # Abort prematurely so we don't retry child matches that
-            # don't belong to this match.
-            self._matches.pop()
-            return False
-        if __retry_one_child(len(self._children) - 1):
-            # Next, try to find another combination of child matches
-            # without decreasing the repetitions.
-            self._current_repetition = {
-                "start": self._children[0]._matches[-1][0]["start"],
-                "end": self._children[-1]._matches[-1][-1]["end"]}
-            return True
-        else:
-            # __retry_one_child already ran until the child expressions
-            # didn't match anymore. During this execution they already
-            # discarded their last match, which means we only have to
-            # clean up this object itself.
+        def __retry_one_repetition():
+            """Retry repetitions in reverse order."""
+            if not len(self._current_match):
+                return False
+            if __retry_one_child(len(self._children) - 1):
+                self._current_repetition = {
+                    "start": self._children[0]._current_match[0]["start"],
+                    "end": self._children[-1]._current_repetition["end"]}
+                return True
             self._current_match.pop()
-        if len(self._matches[-1]) < self._min_repetitions:
-            # If we arrive here, the expression matches less than
-            # _min_repetitions times. Clean up this object and all
-            # children.
-            for c in self._children:
-                pass
-            self._matches.pop()
+            while __retry_one_repetition():
+                result = self._matches_once(context)
+                if result is not None:
+                    self._current_match.append(result)
+                    return True
             return False
+
+        initial_repetitions = len(self._current_match)
+        if __retry_one_repetition():
+            return True
+        for _ in range(0, initial_repetitions - 1):
+            self._current_match.append(self._matches_once(context))
         return True
 
-    def _retry__match_again(self, context):
-        if len(self._matches[-1]) == self._max_repetitions:
-            return False
-        match = self._matches_once(context)
-        if match is not None:
-            # Expression matches, add new match to internal stack
-            self._matches[-1].append(match)
-            context.progress = match["end"]
-            return True
-        return False
+    def _retry__iterate_nongreedy(self, context):
+        raise NotImplementedError("Still todo.")
+
+    def undo(self, context):
+        """Undo all children, then proceed with default behaviour."""
+        for c in reversed(self._children):
+            c.undo()
+        super().undo(context)
 
 
 class BackReferenceExpression(Expression):

@@ -223,21 +223,23 @@ class TestGroupExpression(unittest.TestCase):
         self.assertEqual(self.e._children[2]._matches, [])
         self.assertEqual(self.e._matches, [])
 
-    def test_retry_resets_children_on_failure(self):
-        self.e._children[0]._matches_once = Mock(side_effect=({"start": 0, "end": 1}, {"start": 0, "end": 1}, None, None))
-        self.e._children[1]._matches_once = Mock(side_effect=({"start": 1, "end": 2}, {"start": 1, "end": 2}, None))
-        self.e._children[2]._matches_once = Mock(side_effect=({"start": 2, "end": 3}, None))
-        self.e.matches(self.c)
-        self.assertEqual(self.e.retry(self.c), False)
-        self.assertEqual(self.e._children[0]._matches, [])
-        self.assertEqual(self.e._children[1]._matches, [])
-        self.assertEqual(self.e._children[2]._matches, [])
-        self.assertEqual(self.e._matches, [])
-
-    def test_super_complicated_iteration(self):
+    def retry_greedy_iterates_children_to_find_valid_match(self):
         """
         subject := "abababcabc"
         pattern := "^(ab)*(abc?ab)+(abc)+$"
+
+        retry previous expression to match later one:
+        - (ab)* consumes 1 - 6, (abc?ab)+ doesn't match
+        - (ab)* consumes 1 - 4, (abc?ab)+ matches 5 - 9, (abc)+ doesn't match
+        - (ab)* consumes 0, (abc?ab) consumes 1 - 4, (abc)+ consumes 5 - 10
+        """
+        """
+        retry group repetition to match later expression
+        - (a+) matches 1 - 6, \2 doesn't match
+        - (a+) matches 1 - 3, \2 matches 4 - 6, second repetition doesn't match
+        - (a+) matches 1 - 2, \2 matches 3 - 4, (a+) matches 5, \2 matches 6, b matches 7
+        subject := "aaaaaab"
+        pattern := "((a+)\2){2,}b"
         """
 
 
