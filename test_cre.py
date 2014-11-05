@@ -260,7 +260,6 @@ class TestParser(unittest.TestCase):
         )))
 
     def test_resolve_repetitions_handles_all_repetition_indicators(self):
-        return
         inf = float("inf")
         assertions = (
             ("*",  {"greedy": True,  "min_repetitions": 0, "max_repetitions": inf}),
@@ -269,6 +268,9 @@ class TestParser(unittest.TestCase):
             ("+?", {"greedy": False, "min_repetitions": 1, "max_repetitions": inf}),
             ("?",  {"greedy": True,  "min_repetitions": 0, "max_repetitions": 1}),
             ("??", {"greedy": False, "min_repetitions": 0, "max_repetitions": 1}),
+
+            ("{2}",  {"greedy": True,  "min_repetitions": 2, "max_repetitions": 2}),
+            ("{2}?",  {"greedy": False,  "min_repetitions": 2, "max_repetitions": 2}),
 
             ("{2,5}",  {"greedy": True,  "min_repetitions": 2, "max_repetitions": 5}),
             ("{2,5}?", {"greedy": False, "min_repetitions": 2, "max_repetitions": 5}),

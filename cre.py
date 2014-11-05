@@ -326,6 +326,13 @@ class GroupExpression(Expression):
         super().__init__(**kwargs)
         self._children = children
 
+    def undo(self, context):
+        """Undo all children, then proceed with default behaviour."""
+        for _ in self._current_match:
+            for c in reversed(self._children):
+                c.undo()
+        super().undo(context)
+
     def _matches_once(self, context):
         """Execute all child expressions in order.
 
@@ -385,27 +392,57 @@ class GroupExpression(Expression):
     def _retry__iterate_greedy(self, context):
         """Retry children, then retry repetitons, then pop repetitions.
 
-        There are multiple strategies to find another valid match for
-        a group expression. They are tried in this order:
+        The default behaviour to retry an expression is to simply free
+        the last repetition and check whether the new repetition count
+        is still within _min_repetitions and _max_repetitions. However,
+        for group expressions we take another approach first.
 
-        #1  Retry the last repetition. To retry a repetition, we retry
-            all child expressions in order, beginning with the last one.
-        #2  If the last repetition couldn't be retried anymore, retry
-            the second last repetition, then match the last one again.
-            Proceed with the remaining repetitions.
-        #3  If we can't find a match with the same amount of repetitions
-            free the last repetition - as we undid all repetitions in
-            the previous step, simply call _matches_once until we have
-            reached the previous repetition count minus 1.
+        At first we check whether there is another valid combination of
+        child matches with the same amount of repetitions. This is done
+        by reevaluating all children, beginning with the last child and
+        proceeding backwards.
+        The retry method automatically reverts all state on a failing,
+        so if a child can't retry, it reassigns its consumed part of the
+        subject to the context so the next child can use it for its turn
+        on retry again.
+        Once a child successfully reevaluates, we walk the child list
+        back up and call matches() on each. If this fails again,
+        we repeat the previous step. This way iterate the children up
+        and down until we find a new valid match combination or the
+        first child in the group can't retry anymore, which indicates
+        that we have tried every combination.
+        Remember that retry() reverts the expression on failure, which
+        means once the algorithm can't find another combination, the
+        repetition is already completely reversed. All that needs to be
+        done now is to pop the last repetition from the group
+        expression.
+        This behaviour is encapsulated in the internal function
+        __retry_one_child(child).
+
+        But! We're not done yet. The last paragraph just described our
+        approach for a single repetition. To find all combinations of
+        this group expression, we also need to take previous repetitions
+        into account.
+        Luckily, __match_one_child showed us how to do that: We iterate
+        the repetition list up and down and call __match_one_child on
+        each until we find another combination.
+        To iterate backwards we call __match_one_child. If it returns
+        False, we pop the last repetition from the group expression and
+        just call it again. If it returns True, we call _matches_once
+        on self to iterate forwards.
+        This behaviour is encapsulated in the internal function
+        __retry_one_repetition().
+
+        Only if these steps fails we free the last repetition.
 
         """
+
         if len(self._current_match) == 0:
             # Abort prematurely so we don't retry child matches that
             # don't belong to this match.
             return False
 
         def __retry_one_child(child):
-            """Retry children in reverse order."""
             if child < 0:
                 return False
             current = self._children[child]
@@ -417,7 +454,6 @@ class GroupExpression(Expression):
             return False
 
         def __retry_one_repetition():
-            """Retry repetitions in reverse order."""
             if not len(self._current_match):
                 return False
             if __retry_one_child(len(self._children) - 1):
@@ -433,21 +469,26 @@ class GroupExpression(Expression):
                     return True
             return False
 
+        import pdb; pdb.set_trace()
         initial_repetitions = len(self._current_match)
         if __retry_one_repetition():
             return True
+
+        if initial_repetitions == self._min_repetitions:
+            # We can't pop another result or we don't have enough
+            # repetitions; abort
+            return False
+
         for _ in range(0, initial_repetitions - 1):
+            # __retry_one_repetition returned False which means that
+            # __retry_one_child was executed on each repetition, so
+            # all results have been reset. Restore them up to the second
+            # last repetition.
             self._current_match.append(self._matches_once(context))
         return True
 
     def _retry__iterate_nongreedy(self, context):
         raise NotImplementedError("Still todo.")
-
-    def undo(self, context):
-        """Undo all children, then proceed with default behaviour."""
-        for c in reversed(self._children):
-            c.undo()
-        super().undo(context)
 
 
 class BackReferenceExpression(Expression):
@@ -580,17 +621,28 @@ class Parser:
             minimum = 0
             maximum = inf
             self._context.progress += 1
-        else:
-            # expression object for pattern "{(?P<min>\d)+,(?P<max>\d)+}"
-            # todo: change to pattern "{(?P<min>\d+),(?P<max>\d+)}"
-            if GroupExpression((CharacterExpression(character="{"),
-                                CharacterRangeExpression(start="0", end="9",
+
+        # expression object for pattern "{(?P<repetition>\d+)}"
+        elif GroupExpression((
+                    CharacterExpression(character="{"),
+                    GroupExpression((CharacterRangeExpression(start="0",
+                                                end="9",max_repetitions=inf),),
+                                    name="repetition"),
+                    CharacterExpression("}"))
+             ).matches(self._context):
+                minimum = int(self._context.get_match_string("repetition"))
+                maximum = int(self._context.get_match_string("repetition"))
+
+        # expression object for pattern "{(?P<min>\d)+,(?P<max>\d)+}"
+        # todo: change to pattern "{(?P<min>\d+),(?P<max>\d+)}"
+        elif GroupExpression((CharacterExpression(character="{"),
+                              CharacterRangeExpression(start="0", end="9",
                                     name="min", max_repetitions=inf),
-                                CharacterExpression(","),
-                                CharacterRangeExpression(start="0", end="9",
+                              CharacterExpression(","),
+                              CharacterRangeExpression(start="0", end="9",
                                     name="max", max_repetitions=inf),
-                                CharacterExpression("}"))
-            ).matches(self._context):
+                              CharacterExpression("}"))
+             ).matches(self._context):
                 minimum = int(self._context.get_match_string("min"))
                 maximum = int(self._context.get_match_string("max"))
 
