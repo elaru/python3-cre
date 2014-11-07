@@ -116,7 +116,7 @@ class Expression:
 
     @_current_repetition.setter
     def _current_repetition(self, v):
-        self._currnet_match[-1] = v
+        self._current_match[-1] = v
 
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
@@ -147,6 +147,8 @@ class Expression:
             matches.append(match)
             context.progress = match["end"]
 
+        # todo: group expressions need to retry all children before
+        # giving up ...
         if len(matches) < self._min_repetitions:
             # The expression couldn't match as often as specified: reset
             # the context, discard the matches, return False
@@ -469,7 +471,6 @@ class GroupExpression(Expression):
                     return True
             return False
 
-        import pdb; pdb.set_trace()
         initial_repetitions = len(self._current_match)
         if __retry_one_repetition():
             return True
@@ -493,6 +494,17 @@ class GroupExpression(Expression):
 
 class BackReferenceExpression(Expression):
     """"""
+
+    def __init__(self, reference, **kwargs):
+        super().__init__(**kwargs)
+        self._reference = reference
+
+    def _matches_once(self, context):
+        pattern = context.get_match_string(self._reference)
+        if context.remaining_subject.startswith(pattern):
+            return {"start": context.progress,
+                    "end": context.progress + len(pattern)}
+        return None
 
 
 class Parser:

@@ -198,6 +198,19 @@ class TestAnyOfOptionsExpression(unittest.TestCase):
         self.assertEqual(self.e._options[2]._matches, [])
 
 
+class TestBackReferenceExpression(unittest.TestCase):
+
+    def setUp(self):
+        self.c = cre.EvaluationContext("")
+        self.c._matches["foo"] = [{"start": 0, "end": 1}]
+
+    def test_matches_once_matches_previous_group_result(self):
+        self.c._subject = "aaa"
+        self.c._progress = 1
+        e = cre.BackReferenceExpression("foo")
+        self.assertEqual(e._matches_once(self.c), {"start": 1, "end": 2})
+
+
 class TestGroupExpression(unittest.TestCase):
 
     def setUp(self):
@@ -223,7 +236,8 @@ class TestGroupExpression(unittest.TestCase):
         self.assertEqual(self.e._children[2]._matches, [])
         self.assertEqual(self.e._matches, [])
 
-    def retry_greedy_iterates_children_to_find_valid_match(self):
+    def test_retry_greedy_iterates_children_to_find_valid_match(self):
+        return
         """
         subject := "abababcabc"
         pattern := "^(ab)*(abc?ab)+(abc)+$"
@@ -241,6 +255,25 @@ class TestGroupExpression(unittest.TestCase):
         subject := "aaaaaab"
         pattern := "((a+)\2){2,}b"
         """
+        c = cre.EvaluationContext("aaaaaab")
+        e = cre.GroupExpression(
+            (cre.GroupExpression(
+                (
+                    cre.GroupExpression(
+                        (
+                            cre.CharacterExpression("a", max_repetitions=float("inf")),),
+                        name=2),
+                     cre.BackReferenceExpression(2)),
+                min_repetitions=2,
+                max_repetitions=float("inf"),
+                name=1
+             ),
+             cre.CharacterExpression("b")
+            )
+        )
+        self.assertEqual(e.matches(c), True)
+        self.assertEqual(c.get_match_string(1), "aa")
+        self.assertEqual(c.get_match_string(2), "a")
 
 
 class TestParser(unittest.TestCase):
