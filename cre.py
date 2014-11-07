@@ -110,6 +110,11 @@ class Expression:
     def _current_match(self):
         return self._matches[-1]
 
+    def _pop_current_match(self, context):
+        if self._name is not None:
+            context.pop_match(self._name)
+        self._matches.pop()
+
     @property
     def _current_repetition(self):
         return self._current_match[-1]
@@ -147,8 +152,6 @@ class Expression:
             matches.append(match)
             context.progress = match["end"]
 
-        # todo: group expressions need to retry all children before
-        # giving up ...
         if len(matches) < self._min_repetitions:
             # The expression couldn't match as often as specified: reset
             # the context, discard the matches, return False
@@ -212,9 +215,7 @@ class Expression:
         """Undo the last match with all repetitions."""
         if len(self._current_match):
             context.progress = self._current_match[0]["start"]
-        if self._name is not None:
-            context.pop_match(self._name)
-        self._matches.pop()
+        self._pop_current_match(context)
 
     def _retry__iterate_greedy(self, context):
         """Try to undo the last iteration.
@@ -346,7 +347,8 @@ class GroupExpression(Expression):
             if len(self._current_match) >= self._min_repetitions:
                 break
             if not self._reevaluate_one_repetition(context):
-                self.undo(context)
+                # _reevaluate_one_repetition already reset the
+                # expression, so we can simply abort here.
                 return False
 
         if self._name != None:
@@ -491,8 +493,9 @@ class GroupExpression(Expression):
         just call it again. If it returns True, we call _matches_once
         on self to iterate forwards.
 
-        Just like __retry_one_child, this method completely reverts any
-        state if the reevaluation fails.
+        This method completely reverts any state if the reevaluation
+        fails, including the context progress, the context match
+        reference and self._current_match.
 
         """
         def __retry_one_child(child):
@@ -507,6 +510,7 @@ class GroupExpression(Expression):
             return False
 
         if not len(self._current_match):
+            self._pop_current_match(context)
             return False
         if __retry_one_child(len(self._children) - 1):
             self._current_repetition = {
@@ -715,4 +719,3 @@ class ParsingOverflowException(Exception):
 def _copykeys(d, k):
     """Copy key value pairs k from d into a new dict."""
     return dict(map(lambda x: (x, d[x]), k))
-
