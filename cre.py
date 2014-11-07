@@ -202,7 +202,6 @@ class Expression:
         # update self._matches and the context progress.
         if not ((self._retry__iterate_nongreedy,
                  self._retry__iterate_greedy)[self._greedy])(context):
-            self.undo(context)
             return False
 
         if self._name is not None:
@@ -232,6 +231,7 @@ class Expression:
         if len(self._current_match) > self._min_repetitions:
             context.progress = self._current_match.pop()["start"]
             return True
+        self.undo(context)
         return False
 
     def _retry__iterate_nongreedy(self, context):
@@ -251,6 +251,7 @@ class Expression:
                 self._matches[-1].append(match)
                 context.progress = match["end"]
                 return True
+        self.undo(context)
         return False
 
     def _matches_once(self, context):
