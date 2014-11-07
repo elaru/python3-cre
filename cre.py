@@ -328,6 +328,32 @@ class GroupExpression(Expression):
         super().__init__(**kwargs)
         self._children = children
 
+    def matches(self, context):
+        """Check whether the expression matches in the assigned context.
+        """
+        progress = context.progress
+        self._matches.append([])
+        upper_limit = (self._min_repetitions,
+                       self._max_repetitions)[self._greedy]
+
+        while True:
+            while (context.progress < len(context.subject)
+                   and len(self._current_match) < upper_limit):
+                match = self._matches_once(context)
+                if match is None:
+                    break
+                self._current_match.append(match)
+            if len(self._current_match) >= self._min_repetitions:
+                break
+            if not self._reevaluate_one_repetition(context):
+                self.undo(context)
+                return False
+
+        if self._name != None:
+            context.push_match(self._name, _copykeys(
+                            self._current_repetition, ("start", "end")))
+        return True
+
     def undo(self, context):
         """Undo all children, then proceed with default behaviour."""
         for _ in self._current_match:
@@ -399,20 +425,52 @@ class GroupExpression(Expression):
         is still within _min_repetitions and _max_repetitions. However,
         for group expressions we take another approach first.
 
-        At first we check whether there is another valid combination of
+        Only if these steps fails we free the last repetition.
+
+        """
+
+        if len(self._current_match) == 0:
+            # Abort prematurely so we don't retry child matches that
+            # don't belong to this match.
+            return False
+
+        initial_repetitions = len(self._current_match)
+        if self._reevaluate_one_repetition(context):
+            return True
+
+        if initial_repetitions == self._min_repetitions:
+            # We can't pop another result or we don't have enough
+            # repetitions; abort
+            return False
+
+        for _ in range(0, initial_repetitions - 1):
+            # __retry_one_repetition returned False which means that
+            # __retry_one_child was executed on each repetition, so
+            # all results have been reset. Restore them up to the second
+            # last repetition.
+            self._current_match.append(self._matches_once(context))
+        return True
+
+    def _retry__iterate_nongreedy(self, context):
+        raise NotImplementedError("Still todo.")
+
+    def _reevaluate_one_repetition(self, context):
+        """Reevaluate child expressions to find the next valid match.
+
+        This method checks whether there is another valid combination of
         child matches with the same amount of repetitions. This is done
         by reevaluating all children, beginning with the last child and
         proceeding backwards.
-        The retry method automatically reverts all state on a failing,
-        so if a child can't retry, it reassigns its consumed part of the
+        The retry method automatically reverts all state on failure, so
+        if a child can't retry, it reassigns its consumed part of the
         subject to the context so the next child can use it for its turn
         on retry again.
         Once a child successfully reevaluates, we walk the child list
-        back up and call matches() on each. If this fails again,
-        we repeat the previous step. This way iterate the children up
-        and down until we find a new valid match combination or the
-        first child in the group can't retry anymore, which indicates
-        that we have tried every combination.
+        back up and call matches() on each. If this fails again, we
+        repeat the previous step. This way iterate the children up and
+        down until we find a new valid match combination or the first
+        child in the group can't retry anymore, which indicates that we
+        have tried every combination.
         Remember that retry() reverts the expression on failure, which
         means once the algorithm can't find another combination, the
         repetition is already completely reversed. All that needs to be
@@ -432,18 +490,11 @@ class GroupExpression(Expression):
         False, we pop the last repetition from the group expression and
         just call it again. If it returns True, we call _matches_once
         on self to iterate forwards.
-        This behaviour is encapsulated in the internal function
-        __retry_one_repetition().
 
-        Only if these steps fails we free the last repetition.
+        Just like __retry_one_child, this method completely reverts any
+        state if the reevaluation fails.
 
         """
-
-        if len(self._current_match) == 0:
-            # Abort prematurely so we don't retry child matches that
-            # don't belong to this match.
-            return False
-
         def __retry_one_child(child):
             if child < 0:
                 return False
@@ -455,41 +506,20 @@ class GroupExpression(Expression):
                     return True
             return False
 
-        def __retry_one_repetition():
-            if not len(self._current_match):
-                return False
-            if __retry_one_child(len(self._children) - 1):
-                self._current_repetition = {
-                    "start": self._children[0]._current_match[0]["start"],
-                    "end": self._children[-1]._current_repetition["end"]}
-                return True
-            self._current_match.pop()
-            while __retry_one_repetition():
-                result = self._matches_once(context)
-                if result is not None:
-                    self._current_match.append(result)
-                    return True
+        if not len(self._current_match):
             return False
-
-        initial_repetitions = len(self._current_match)
-        if __retry_one_repetition():
+        if __retry_one_child(len(self._children) - 1):
+            self._current_repetition = {
+                "start": self._children[0]._current_match[0]["start"],
+                "end": self._children[-1]._current_repetition["end"]}
             return True
-
-        if initial_repetitions == self._min_repetitions:
-            # We can't pop another result or we don't have enough
-            # repetitions; abort
-            return False
-
-        for _ in range(0, initial_repetitions - 1):
-            # __retry_one_repetition returned False which means that
-            # __retry_one_child was executed on each repetition, so
-            # all results have been reset. Restore them up to the second
-            # last repetition.
-            self._current_match.append(self._matches_once(context))
-        return True
-
-    def _retry__iterate_nongreedy(self, context):
-        raise NotImplementedError("Still todo.")
+        self._current_match.pop()
+        while self._reevaluate_one_repetition(context):
+            result = self._matches_once(context)
+            if result is not None:
+                self._current_match.append(result)
+                return True
+        return False
 
 
 class BackReferenceExpression(Expression):

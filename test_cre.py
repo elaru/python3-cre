@@ -237,6 +237,25 @@ class TestGroupExpression(unittest.TestCase):
         self.assertEqual(self.e._matches, [])
 
     def test_retry_greedy_iterates_children_to_find_valid_match(self):
+        """
+        subject := "a" * 16
+        pattern := "^(a+a{2,}a){3,}a$"
+        """
+        inf = float("inf")
+        c = cre.EvaluationContext("a" * 16)
+        e = cre.GroupExpression(
+            (
+                cre.GroupExpression(
+                    (
+                        cre.CharacterExpression("a", max_repetitions=inf),
+                        cre.CharacterExpression("a", min_repetitions=2, max_repetitions=inf),
+                        cre.CharacterExpression("a")
+                    ),
+                    min_repetitions=3
+                ),
+            )
+        )
+        self.assertEqual(e.matches(c), True)
         return
         """
         subject := "abababcabc"
