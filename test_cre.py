@@ -251,8 +251,10 @@ class TestGroupExpression(unittest.TestCase):
                         cre.CharacterExpression("a", min_repetitions=2, max_repetitions=inf),
                         cre.CharacterExpression("a")
                     ),
-                    min_repetitions=3
+                    min_repetitions=3,
+                    max_repetitions=inf
                 ),
+                cre.CharacterExpression("a")
             )
         )
         self.assertEqual(e.matches(c), True)

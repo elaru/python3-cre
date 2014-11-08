@@ -266,6 +266,34 @@ class Expression:
         """
         raise NotImplementedError()
 
+    def _wrap_with_name(self, v):
+        """Helper method for __str__; wrap v with name reference."""
+        if self._name is not None:
+            return "(?P<%s>%s)" % (str(self._name), v)
+        return v
+
+    def _repetition_to_string(self):
+        """Helper method for __str__; build repetition string."""
+        if self._min_repetitions == self._max_repetitions == 1:
+            return ""
+        inf = float("inf")
+        if self._min_repetitions == 0 and self._max_repetitions == inf:
+            r = "*"
+        elif self._min_repetitions == 1 and self._max_repetitions == inf:
+            r = "+"
+        elif self._min_repetitions == 0 and self._max_repetitions == 1:
+            r = "?"
+        elif self._min_repetitions == self._max_repetitions:
+            r = "{%d}" % self._min_repetitions
+        else:
+            r = "{%s,%s}" % ("" if self._min_repetitions == 0
+                                else str(self._min_repetitions),
+                             "" if self._max_repetitions == inf
+                                else str(self._max_repetitions))
+        if not self._greedy:
+            r += "?"
+        return r
+
 
 class CharacterExpression(Expression):
     """Represents a single character."""
@@ -278,6 +306,9 @@ class CharacterExpression(Expression):
         if context.current_subject_character == self._char:
             return {"start": context.progress, "end": context.progress + 1}
         return None
+
+    def __str__(self):
+        return self._wrap_with_name(self._char) + self._repetition_to_string()
 
 
 class CharacterRangeExpression(Expression):
@@ -294,6 +325,10 @@ class CharacterRangeExpression(Expression):
         if self._start <= context.current_subject_character <= self._end:
             return {"start": context.progress, "end": context.progress + 1}
         return None
+
+    def __str__(self):
+        return (self._wrap_with_name("[%s-%s]" % (self._start, self._end))
+                + self._repetition_to_string())
 
 
 class AnyOfOptionsExpression(Expression):
@@ -526,6 +561,12 @@ class GroupExpression(Expression):
                 return True
         return False
 
+    def __str__(self):
+        return (self._wrap_with_name("%s" if self._name is not None
+                                          else "(%s)")
+                % "".join(map(lambda x: str(x), self._children))
+                + self._repetition_to_string())
+
 
 class BackReferenceExpression(Expression):
     """"""
@@ -540,6 +581,9 @@ class BackReferenceExpression(Expression):
             return {"start": context.progress,
                     "end": context.progress + len(pattern)}
         return None
+
+    def __str__(self):
+        return "(?P=%s)" % self._reference + self._repetition_to_string()
 
 
 class Parser:
