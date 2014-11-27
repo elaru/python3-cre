@@ -491,7 +491,24 @@ class GroupExpression(Expression):
         return True
 
     def _retry__iterate_nongreedy(self, context):
-        raise NotImplementedError("Still todo.")
+        """"""
+        if len(self._current_match) == 0:
+            return False
+
+        initial_repetitions = len(self._current_match)
+        if self._reevaluate_one_repetition(context):
+            return True
+
+        if initial_repetitions == self._max_repetitions:
+            return False
+
+        self._matches.append([])
+        for _ in range(0, initial_repetitions + 1):
+            match = self._matches_once(context)
+            if match is None:
+                return False
+            self._current_match.append(match)
+        return True
 
 
     def _reevaluate_one_repetition(self, context):

@@ -278,6 +278,25 @@ class TestGroupExpression(unittest.TestCase):
         )
         self.assertEqual(e.matches(c), True)
 
+    def test_retry_nongreedy_iterates_children_to_find_valid_match(self):
+        """
+        subject := "a" * 12 + b
+        pattern := "^(aaa){2,}?b$"
+        """
+        c = cre.EvaluationContext("a" * 12 + "b")
+        e = cre.GroupExpression(
+            (
+                cre.GroupExpression(
+                    (cre.CharacterExpression("a"),cre.CharacterExpression("a"),cre.CharacterExpression("a"),),
+                    min_repetitions=2,
+                    max_repetitions=float("inf"),
+                    greedy=False
+                ),
+                cre.CharacterExpression("b")
+            )
+        )
+        self.assertEqual(e.matches(c), True)
+
 
 class TestParser(unittest.TestCase):
 
