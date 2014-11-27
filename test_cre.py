@@ -258,43 +258,6 @@ class TestGroupExpression(unittest.TestCase):
             )
         )
         self.assertEqual(e.matches(c), True)
-        return
-        """
-        subject := "abababcabc"
-        pattern := "^(ab)*(abc?ab)+(abc)+$"
-
-        retry previous expression to match later one:
-        - (ab)* consumes 1 - 6, (abc?ab)+ doesn't match
-        - (ab)* consumes 1 - 4, (abc?ab)+ matches 5 - 9, (abc)+ doesn't match
-        - (ab)* consumes 0, (abc?ab) consumes 1 - 4, (abc)+ consumes 5 - 10
-        """
-        """
-        retry group repetition to match later expression
-        - (a+) matches 1 - 6, \2 doesn't match
-        - (a+) matches 1 - 3, \2 matches 4 - 6, second repetition doesn't match
-        - (a+) matches 1 - 2, \2 matches 3 - 4, (a+) matches 5, \2 matches 6, b matches 7
-        subject := "aaaaaab"
-        pattern := "((a+)\2){2,}b"
-        """
-        c = cre.EvaluationContext("aaaaaab")
-        e = cre.GroupExpression(
-            (cre.GroupExpression(
-                (
-                    cre.GroupExpression(
-                        (
-                            cre.CharacterExpression("a", max_repetitions=float("inf")),),
-                        name=2),
-                     cre.BackReferenceExpression(2)),
-                min_repetitions=2,
-                max_repetitions=float("inf"),
-                name=1
-             ),
-             cre.CharacterExpression("b")
-            )
-        )
-        self.assertEqual(e.matches(c), True)
-        self.assertEqual(c.get_match_string(1), "aa")
-        self.assertEqual(c.get_match_string(2), "a")
 
 
 class TestParser(unittest.TestCase):
@@ -324,7 +287,7 @@ class TestParser(unittest.TestCase):
             ("??", {"greedy": False, "min_repetitions": 0, "max_repetitions": 1}),
 
             ("{2}",  {"greedy": True,  "min_repetitions": 2, "max_repetitions": 2}),
-            ("{2}?",  {"greedy": False,  "min_repetitions": 2, "max_repetitions": 2}),
+            ("{2}?", {"greedy": False, "min_repetitions": 2, "max_repetitions": 2}),
 
             ("{2,5}",  {"greedy": True,  "min_repetitions": 2, "max_repetitions": 5}),
             ("{2,5}?", {"greedy": False, "min_repetitions": 2, "max_repetitions": 5}),
