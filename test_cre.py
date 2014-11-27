@@ -259,6 +259,25 @@ class TestGroupExpression(unittest.TestCase):
         )
         self.assertEqual(e.matches(c), True)
 
+    def test_retry_greedy_pops_children_to_find_valid_match(self):
+        """
+        subject := "a" * 10
+        pattern := "^(aaa)+a{2,}$"
+        """
+        inf = float("inf")
+        c = cre.EvaluationContext("a" * 10)
+        e = cre.GroupExpression(
+            (
+                cre.GroupExpression(
+                    (cre.CharacterExpression("a"),cre.CharacterExpression("a"),cre.CharacterExpression("a"),),
+                    min_repetitions=1,
+                    max_repetitions=float("inf")
+                ),
+                cre.CharacterExpression("a", min_repetitions=2, max_repetitions=inf)
+            )
+        )
+        self.assertEqual(e.matches(c), True)
+
 
 class TestParser(unittest.TestCase):
 

@@ -481,6 +481,7 @@ class GroupExpression(Expression):
             # repetitions; abort
             return False
 
+        self._matches.append([])
         for _ in range(0, initial_repetitions - 1):
             # __retry_one_repetition returned False which means that
             # __retry_one_child was executed on each repetition, so
@@ -491,6 +492,7 @@ class GroupExpression(Expression):
 
     def _retry__iterate_nongreedy(self, context):
         raise NotImplementedError("Still todo.")
+
 
     def _reevaluate_one_repetition(self, context):
         """Reevaluate child expressions to find the next valid match.
