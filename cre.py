@@ -407,7 +407,7 @@ class GroupExpression(Expression):
         """Undo all children, then proceed with default behaviour."""
         for _ in self._current_match:
             for c in reversed(self._children):
-                c.undo()
+                c.undo(context)
         super().undo(context)
 
     def _matches_once(self, context):
