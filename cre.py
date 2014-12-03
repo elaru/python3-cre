@@ -197,12 +197,21 @@ class Expression:
         limits.
 
         """
-        # These methods return True if the expression could be
-        # reevaluated, or False otherwise. The methods already
-        # update self._matches and the context progress.
-        if not ((self._retry__iterate_nongreedy,
-                 self._retry__iterate_greedy)[self._greedy])(context):
+        if (len(self._current_match) == (self._max_repetitions,
+                                         self._min_repetitions)[self._greedy]):
+            self.undo(context)
             return False
+
+        if self._greedy:
+            context.progress = self._current_match.pop()["start"]
+        else:
+            match = self._matches_once(context)
+            if match is not None:
+                self._matches[-1].append(match)
+                context.progress = match["end"]
+            else:
+                self.undo(context)
+                return False
 
         if self._name is not None:
             # Update the context if this is a named group.
@@ -215,44 +224,6 @@ class Expression:
         if len(self._current_match):
             context.progress = self._current_match[0]["start"]
         self._pop_current_match(context)
-
-    def _retry__iterate_greedy(self, context):
-        """Try to undo the last iteration.
-
-        Helper method for retry(); Execute a single repetition iteration
-        with greedy behaviour.
-        If the expression allows for fewer repetitions, remove the last
-        match from internal stack, reassign the consumed characters to
-        the context and return True.
-        If the expression already matches as few times as allowed, drop
-        the matches and return False.
-
-        """
-        if len(self._current_match) > self._min_repetitions:
-            context.progress = self._current_match.pop()["start"]
-            return True
-        self.undo(context)
-        return False
-
-    def _retry__iterate_nongreedy(self, context):
-        """Try to match one additional time.
-
-        Helper method for retry(); Execute a single repetition iteration
-        with nongreedy behaviour.
-        Execute _matches_once(). If the expression matches again and has
-        not yet matched as often as allowed, return True, else return
-        False.
-
-        """
-        if len(self._matches[-1]) < self._max_repetitions:
-            match = self._matches_once(context)
-            if match is not None:
-                # Expression matches, add new match to internal stack
-                self._matches[-1].append(match)
-                context.progress = match["end"]
-                return True
-        self.undo(context)
-        return False
 
     def _matches_once(self, context):
         """Evaluate the expression once without modifying state.
@@ -392,6 +363,46 @@ class GroupExpression(Expression):
                             self._current_repetition, ("start", "end")))
         return True
 
+    def retry(self, context):
+        """Retry children before adding or removing repetitions."""
+        initial_repetitions = len(self._current_match)
+
+        if len(self._current_match) == 0:
+            if self._greedy:
+                return False
+
+        elif self._reevaluate_one_repetition(context):
+            return True
+
+        if initial_repetitions == (self._max_repetitions,
+                                   self._min_repetitions)[self._greedy]:
+            # We exhausted every repetition count and match combination.
+            # _reevaluate_one_repetition already cleaned up the context,
+            # so there is nothing left to do here.
+            return False
+
+        self._matches.append([])
+        # __retry_one_repetition returned False which means that
+        # __retry_one_child was executed on each repetition, so
+        # all results have been reset. Restore them up to the second
+        # last repetition.
+
+        if (self._greedy):
+            for _ in range(0, initial_repetitions - 1):
+                self._current_match.append(self._matches_once(context))
+        else:
+            for _ in range(0, initial_repetitions + 1):
+                match = self._matches_once(context)
+                if match is None:
+                    self.undo(context)
+                    return False
+                self._current_match.append(match)
+
+        if self._name is not None:
+            context.override_match(self._name,
+                        _copykeys(self._current_repetition, ("start", "end")))
+        return True
+
     def undo(self, context):
         """Undo all children, then proceed with default behaviour."""
         for _ in self._current_match:
@@ -454,62 +465,6 @@ class GroupExpression(Expression):
             return {"start": self._children[0]._current_match[0]["start"],
                     "end": self._children[-1]._current_repetition["end"]}
         return None
-
-    def _retry__iterate_greedy(self, context):
-        """Retry children, then retry repetitons, then pop repetitions.
-
-        The default behaviour to retry an expression is to simply free
-        the last repetition and check whether the new repetition count
-        is still within _min_repetitions and _max_repetitions. However,
-        for group expressions we take another approach first.
-
-        Only if these steps fails we free the last repetition.
-
-        """
-
-        if len(self._current_match) == 0:
-            # Abort prematurely so we don't retry child matches that
-            # don't belong to this match.
-            return False
-
-        initial_repetitions = len(self._current_match)
-        if self._reevaluate_one_repetition(context):
-            return True
-
-        if initial_repetitions == self._min_repetitions:
-            # We can't pop another result or we don't have enough
-            # repetitions; abort
-            return False
-
-        self._matches.append([])
-        for _ in range(0, initial_repetitions - 1):
-            # __retry_one_repetition returned False which means that
-            # __retry_one_child was executed on each repetition, so
-            # all results have been reset. Restore them up to the second
-            # last repetition.
-            self._current_match.append(self._matches_once(context))
-        return True
-
-    def _retry__iterate_nongreedy(self, context):
-        """"""
-        if len(self._current_match) == 0:
-            return False
-
-        initial_repetitions = len(self._current_match)
-        if self._reevaluate_one_repetition(context):
-            return True
-
-        if initial_repetitions == self._max_repetitions:
-            return False
-
-        self._matches.append([])
-        for _ in range(0, initial_repetitions + 1):
-            match = self._matches_once(context)
-            if match is None:
-                return False
-            self._current_match.append(match)
-        return True
-
 
     def _reevaluate_one_repetition(self, context):
         """Reevaluate child expressions to find the next valid match.
