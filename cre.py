@@ -666,14 +666,15 @@ class Parser:
                 minimum = int(self._context.get_match_string("repetition"))
                 maximum = int(self._context.get_match_string("repetition"))
 
-        # expression object for pattern "{(?P<min>\d)+,(?P<max>\d)+}"
-        # todo: change to pattern "{(?P<min>\d+),(?P<max>\d+)}"
+        # expression object for pattern "{(?P<min>\d+),(?P<max>\d+)}"
         elif GroupExpression((CharacterExpression(character="{"),
-                              CharacterRangeExpression(start="0", end="9",
-                                    name="min", max_repetitions=inf),
+                              GroupExpression(name="min", children=(
+                                    CharacterRangeExpression(start="0",
+                                        end="9", max_repetitions=inf),)),
                               CharacterExpression(","),
-                              CharacterRangeExpression(start="0", end="9",
-                                    name="max", max_repetitions=inf),
+                              GroupExpression(name="max", children=(
+                                    CharacterRangeExpression(start="0",
+                                        end="9", max_repetitions=inf),)),
                               CharacterExpression("}"))
              ).matches(self._context):
                 minimum = int(self._context.get_match_string("min"))
