@@ -3,10 +3,8 @@
 
 This module provides a custom regex implementation I wrote to get a
 better understanding of regular expressions. It aims to support the
-full feature set of pythons builtin re module excluding unicode
-support in character groups (e.g. "\w" will not match the japanese
-alphabet). It is not optimized for speed and should not be used in
-production code.
+full feature set of pythons builtin re module. It is not optimized
+for speed and should not be used in production code.
 If you want to see how the module works, read the docstrings of the
 Expression and Parser classes.
 
@@ -18,20 +16,21 @@ import unicodedata
 
 
 class EvaluationContext:
-    """The evaluation context holds information about the current parsing state
-    during runtime. This includes the subject, current parsing progress and the
-    results of capturing expressions.
+    """The evaluation context holds information about the current
+    parsing state at runtime. This includes the subject, current
+    parsing progress and the results of capturing expressions.
     """
 
     def __init__(self, subject):
-        # Number of parsed characters; changed by expressions during evaluation
+        # Number of parsed characters; changed by expressions
+        # during evaluation
         self._progress = 0
 
         # String that is being parsed
         self._subject = subject
 
-        # Matches of capturing groups; used by BackReferenceExpressions and
-        # returned as the result of successful matching operation.
+        # Matches of capturing groups; used by BackReferenceExpressions
+        # and returned as the result of successful matching operation.
         self._matches = {}
 
     @property
@@ -132,15 +131,9 @@ class Expression:
         Return True if the expression matches, else False.
 
         """
-        # Remember the progress in case we have to reset it because the
-        # expression did not match
         progress = context.progress
-
-        # Temporary list of results; append it to self._matches if the
-        # evaluation was successful
         matches = []
 
-        # Try to match the expression up to upper_limit times
         upper_limit = (self._min_repetitions,
                        self._max_repetitions)[self._greedy]
 
@@ -153,7 +146,7 @@ class Expression:
             context.progress = match["end"]
 
         if len(matches) < self._min_repetitions:
-            # The expression couldn't match as often as specified: reset
+            # The expression couldn't match as often as required: reset
             # the context, discard the matches, return False
             context.progress = progress
             return False
@@ -167,27 +160,17 @@ class Expression:
         return True
 
     def retry(self, context):
-        """Reevaluate the expression with a different repetition.
-
-        This method is required for scenarios like:
-        pattern := "f\w+ar"
-        subject := "foobar"
-
-        In this case, the sequence expression "\w+" will match the
-        string "oobar" which causes the following character expression
-        "a" to fail. Now we have to iterate through the remaining match
-        variations of the sequence expression ("ooba", "oob", "oo", "o")
-        to find a combination that is valid for subsequent expressions.
+        """Reevaluate the expression to the next repetition count.
 
         This method performs a single iteration step. This includes
         updating the context progress and, if the expression is named,
-        the context match dict.
+        the match stored in the context.
 
         Note that the iteration can be performed in two directions:
         If the expression is greedy, it consumes as many characters as
         possible during the initial evaluation and we free parts of the
         subject during reevaluation.
-        if the expression is non-greedy, it matches as few characters as
+        if the expression is nongreedy, it matches as few characters as
         possible during the initial evaluation and we consume additional
         parts of the subject during reevaluation.
 
@@ -283,9 +266,12 @@ class CharacterExpression(Expression):
 
 
 class CharacterRangeExpression(Expression):
-    """Represents a character range, like [a-z]. For a collection of
-    ranges, like [a-zA-Z], multiple range expressions are concatenated
-    in a GroupExpression."""
+    """Represents a character range, like [a-z].
+
+    For a collection of ranges, like [a-zA-Z], multiple range
+    expressions are concatenated in an AnyOfOptionsExpression.
+
+    """
 
     def __init__(self, start, end, **kwargs):
         super().__init__(**kwargs)
@@ -307,10 +293,9 @@ class AnyOfOptionsExpression(Expression):
 
     This class will be instantiated for
     the following expression strings:
-    * Two expressions concatenated with "|"
-    * Character groups like "[abc]" or "\w", which will be
-      represented as an option group of  CharacterExpressions
-      or CharacterRangeExpressions.
+    * Two or more expressions concatenated with "|"
+    * Character groups like "[abc]", which will be represented as an
+      option group of  CharacterExpressions or CharacterRangeExpressions
 
     """
 
@@ -330,7 +315,7 @@ class AnyOfOptionsExpression(Expression):
 
 
 class GroupExpression(Expression):
-    """Represents a group of expressions."""
+    """Represents and manages a group of expressions, like "(ab|c)". """
 
     def __init__(self, children, **kwargs):
         super().__init__(**kwargs)
@@ -338,6 +323,11 @@ class GroupExpression(Expression):
 
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
+
+        GroupExpression overrides this method to handle all possible
+        distributions of characters to its child expressions. See the
+        documentation for examples.
+
         """
         progress = context.progress
         self._matches.append([])
@@ -414,33 +404,10 @@ class GroupExpression(Expression):
         """Execute all child expressions in order.
 
         Iterate recursively over self._children to find a combination
-        that suffices the match conditions of all children. Look at the
-        following example:
-
-        pattern := "a+?a{1,3}b"
-        subject := "aaaaab"
-
-        Here, the expression "a+?" is evaluated first and consumes the
-        string "a". After that, the expression "a{1,3}" consumes the
-        string "aaa". Now the remaining subject is "ab", but the last
-        pattern matches "b".
-        Our approach to solve this is to reevaluate the expressions in
-        reverse order. We start with the last matching expression and
-        retry it until the next expression matches or all possibilities
-        failed. Then we retry the second last expression and start
-        reevaluating the last one, and so on.
-        Look at the following table; the ranges address the indices in
-        the subject:
-
-        iteration | "a+?" | "a{1,3}" | "b"
-            #0        -         -       -
-            #1        0         -       -
-            #2        0       1 - 3     -
-            #3        0       1 - 2     -
-            #4        0         1       -
-            #5      0 - 1       -       -
-            #6      0 - 1     2 - 4     -
-            #7      0 - 1     2 - 4     5
+        that suffices the match conditions of all children. This is done
+        evaluating all children in order, starting with the first one.
+        When a child expression can't match, the previous children are
+        reevaluated.
 
         If the expression does not match, the iterative calls to retry
         will automatically reset the child expressions.
@@ -561,7 +528,8 @@ class BackReferenceExpression(Expression):
 
 
 class Parser:
-    """The parser creates expression object trees from pattern strings."""
+    """The parser creates expression object trees from pattern strings.
+    """
 
     def __init__(self):
         self._context = None
@@ -630,9 +598,9 @@ class Parser:
             self._context.progress += 1
 
     def _parse_escaped(self):
-        """Handle parsing after an escape sequence (backslash) was detected.
+        """Handle parsing after a backslash was detected.
 
-        This method will either create an appropriate expression tree for
+        This method will either create an appropriate expression for
         patterns like "\w" or prepare parsing of the next character as
         CharacterExpression.
 

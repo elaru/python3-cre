@@ -22,59 +22,6 @@ Usage
 Yet to come.
 
 
-Architecture
-------------
-
-This paragraph explains the internal software architecture. It is not relevant
-to understand the behaviour of this module.
-
-**TL;DR**:
-`Expression` as GoF interpreter, `Parser` as state machine.
-
-
-### Expressions as classes
-
-All expressions are represented by subclasses of `Expression`. For example,
-if we parse the pattern `a(bc)+`, the leading `a` will be instantiated as a
-`CharacterExpression`, while `(bc)+` will be turned into a `GroupExpression`
-consisting of another two CharacterExpressions. This way, a regex pattern is
-represented by a nested expression object tree at runtime. The evaluation is
-handled recursively by the expression classes according to the GoF interpreter
-pattern.
-
-All expressions share a couple of qualities that are implemented in the base
-class. All expressions have
-
-* lower and upper repetition limits: `?`, `*`, `+`, `{m}`, `{m,n}`
-* a greedy / nongreedy indicator: `+`, `+?`, ...
-* optinally a name: `(P<name>foo)`
-
-You can pass values for any of these attributes to the `Expression`
-constructor. Subclasses will usually add their own parameters: for example,
-the `CharacterExpression` also expects the character it should match.
-
-The matching behaviour is implemented in `_matches_once()`, which subclasses
-must implement. It returns a single match result without handling repetitions,
-like `{"start": 0, "end": 1}`, or `None` if the expression didn't match. This
-method is in return called by `matches()` and `retry()` - you can probably
-imagine the responsibility of those.
-
-`matches()` performs the initial match of an expression using `_matches_once()`
-until it reaches the appropriate repetition limit. For greedy expressions this
-is the upper limit, while nongreedy expressions only iterate until they reach
-their lower limit. The method returns a boolean indicating the success or
-failure of the match operation.
-
-Likewise, `retry()` reevaluates the expression. In case of greedy expressions
-this is accomplished by freeing the last repetition. Nongreedy expressions try
-to allocate additional parts of the subject by calling `_matches_once()` again.
-
-
-### Generating expression objects from a string pattern
-
-A paragraph or two about the `Parser` class...
-
-
 Examples
 --------
 
