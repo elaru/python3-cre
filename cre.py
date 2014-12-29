@@ -663,22 +663,28 @@ class Parser:
                                     name="repetition"),
                     CharacterExpression("}"))
              ).matches(self._context):
-                minimum = int(self._context.get_match_string("repetition"))
-                maximum = int(self._context.get_match_string("repetition"))
+                minimum = maximum = int(
+                    self._context.get_match_string("repetition"))
 
-        # expression object for pattern "{(?P<min>\d+),(?P<max>\d+)}"
+        # expression object for pattern "{(?P<min>\d*),(?P<max>\d*)}"
         elif GroupExpression((CharacterExpression(character="{"),
-                              GroupExpression(name="min", children=(
-                                    CharacterRangeExpression(start="0",
-                                        end="9", max_repetitions=inf),)),
+                              GroupExpression(
+                                    (CharacterRangeExpression(start="0",
+                                        end="9", min_repetitions=0,
+                                        max_repetitions=inf),),
+                                    name="min"),
                               CharacterExpression(","),
-                              GroupExpression(name="max", children=(
-                                    CharacterRangeExpression(start="0",
-                                        end="9", max_repetitions=inf),)),
+                              GroupExpression(
+                                    (CharacterRangeExpression(start="0",
+                                        end="9", min_repetitions=0,
+                                        max_repetitions=inf),),
+                                    name="max"),
                               CharacterExpression("}"))
              ).matches(self._context):
-                minimum = int(self._context.get_match_string("min"))
-                maximum = int(self._context.get_match_string("max"))
+                minimum = self._context.get_match_string("min")
+                maximum = self._context.get_match_string("max")
+                minimum = int(minimum) if len(minimum) else 0
+                maximum = int(maximum) if len(maximum) else inf
 
         if (self._context.progress < len(self._context._subject)
                 and self._context.current_subject_character == "?"

@@ -331,6 +331,8 @@ class TestParser(unittest.TestCase):
             ("{2,5}?", {"greedy": False, "min_repetitions": 2, "max_repetitions": 5}),
             ("{12,15}",  {"greedy": True,  "min_repetitions": 12, "max_repetitions": 15}),
             ("{12,15}?", {"greedy": False, "min_repetitions": 12, "max_repetitions": 15}),
+            ("{,}",  {"greedy": True,  "min_repetitions": 0, "max_repetitions": inf}),
+            ("{,}?", {"greedy": False, "min_repetitions": 0, "max_repetitions": inf}),
         )
         for a in assertions:
             self.p._context = cre.EvaluationContext(a[0])
