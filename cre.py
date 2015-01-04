@@ -265,6 +265,10 @@ class Expression:
             r += "?"
         return r
 
+    def __eq__(self, other):
+        return all(map(lambda x: getattr(self, x) == getattr(other, x),
+                       vars(self)))
+
 
 class CharacterExpression(Expression):
     """Represents a single character."""
