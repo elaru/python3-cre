@@ -307,7 +307,6 @@ class TestParser(unittest.TestCase):
         pass
 
     def test_parsing_of_simple_character_pattern(self):
-        return
         self.assertEqual(self.p.parse("abc"), cre.GroupExpression(children=(
             cre.CharacterExpression("a"),
             cre.CharacterExpression("b"),

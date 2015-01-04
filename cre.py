@@ -336,7 +336,7 @@ class GroupExpression(Expression):
 
     def __init__(self, children, **kwargs):
         super().__init__(**kwargs)
-        self._children = children
+        self._children = tuple(children)
 
     @synchronize_context
     def matches(self, context):
@@ -551,14 +551,14 @@ class Parser:
         if self._context is not None:
             raise Exception("Parser already in use!")
         self._context = EvaluationContext(pattern)
-        self._current = {"state": "unknown"}
+        self._current = {"state": "unknown", "children": []}
 
         while self._context.progress < len(pattern):
             getattr(self, "_parse_" + self._current["state"])()
 
         if len(self._stack) > 1:
             raise Exception("More expressions opened than closed")
-        root = GroupExpression(self._groups.pop()["children"])
+        root = GroupExpression(self._stack.pop()["children"])
         self._context = None
         return root
 
