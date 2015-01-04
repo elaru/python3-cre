@@ -15,6 +15,45 @@ Expression and Parser classes.
 import unicodedata
 
 
+def synchronize_context(fn):
+    """Decorator function that wraps the Expression matching methods.
+
+    If the wrapped expression matches, update the context to store the
+    new match. If it doesn't match, call undo() on the expression to
+    reset both it's internal state and the stored match in the context.
+
+    todo: This decorator also resets the expression if the matching
+    failed. Find a name for the decorator that includes this behaviour!
+
+    """
+    def wrap_matches(obj, context):
+        if fn(obj, context):
+            if obj._name is not None:
+                context.push_match(obj._name, _copykeys(
+                        obj._current_repetition, ("start", "end")))
+            return True
+        if len(obj._current_match):
+            context.progress = obj._current_match[0]["start"]
+        obj._matches.pop()
+        return False
+
+    def wrap_retry(obj, context):
+        if fn(obj, context):
+            if obj._name is not None:
+                context.override_match(obj._name, _copykeys(
+                        obj._current_repetition, ("start", "end")))
+            return True
+        obj.undo(context)
+        return False
+
+    if fn.__name__ == "matches":
+        return wrap_matches
+    if fn.__name__ == "retry":
+        return wrap_retry
+    raise Exception("synchronize_context only works with "
+                    + "Expression.matches and Expression.retry")
+
+
 class EvaluationContext:
     """The evaluation context holds information about the current
     parsing state at runtime. This includes the subject, current
@@ -109,11 +148,6 @@ class Expression:
     def _current_match(self):
         return self._matches[-1]
 
-    def _pop_current_match(self, context):
-        if self._name is not None:
-            context.pop_match(self._name)
-        self._matches.pop()
-
     @property
     def _current_repetition(self):
         return self._current_match[-1]
@@ -122,6 +156,7 @@ class Expression:
     def _current_repetition(self, v):
         self._current_match[-1] = v
 
+    @synchronize_context
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
 
@@ -131,34 +166,21 @@ class Expression:
         Return True if the expression matches, else False.
 
         """
-        progress = context.progress
-        matches = []
-
+        self._matches.append([])
         upper_limit = (self._min_repetitions,
                        self._max_repetitions)[self._greedy]
 
         while (context.progress < len(context.subject)
-               and len(matches) < upper_limit):
+               and len(self._current_match) < upper_limit):
             match = self._matches_once(context)
             if match is None:
                 break
-            matches.append(match)
+            self._current_match.append(match)
             context.progress = match["end"]
 
-        if len(matches) < self._min_repetitions:
-            # The expression couldn't match as often as required: reset
-            # the context, discard the matches, return False
-            context.progress = progress
-            return False
+        return self._min_repetitions <= len(self._current_match)
 
-        self._matches.append(matches)
-        if self._name != None:
-            # If the expression was a numeric or named group, update
-            # the matched value on the context
-            context.push_match(self._name, _copykeys(
-                            self._current_repetition, ("start", "end")))
-        return True
-
+    @synchronize_context
     def retry(self, context):
         """Reevaluate the expression to the next repetition count.
 
@@ -182,7 +204,6 @@ class Expression:
         """
         if (len(self._current_match) == (self._max_repetitions,
                                          self._min_repetitions)[self._greedy]):
-            self.undo(context)
             return False
 
         if self._greedy:
@@ -193,20 +214,16 @@ class Expression:
                 self._matches[-1].append(match)
                 context.progress = match["end"]
             else:
-                self.undo(context)
                 return False
-
-        if self._name is not None:
-            # Update the context if this is a named group.
-            context.override_match(self._name,
-                        _copykeys(self._current_repetition, ("start", "end")))
         return True
 
     def undo(self, context):
         """Undo the last match with all repetitions."""
         if len(self._current_match):
             context.progress = self._current_match[0]["start"]
-        self._pop_current_match(context)
+        if self._name is not None:
+            context.pop_match(self._name)
+        self._matches.pop()
 
     def _matches_once(self, context):
         """Evaluate the expression once without modifying state.
@@ -321,6 +338,7 @@ class GroupExpression(Expression):
         super().__init__(**kwargs)
         self._children = children
 
+    @synchronize_context
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
 
@@ -329,7 +347,6 @@ class GroupExpression(Expression):
         documentation for examples.
 
         """
-        progress = context.progress
         self._matches.append([])
         upper_limit = (self._min_repetitions,
                        self._max_repetitions)[self._greedy]
@@ -342,41 +359,28 @@ class GroupExpression(Expression):
                     break
                 self._current_match.append(match)
             if len(self._current_match) >= self._min_repetitions:
-                break
-            if not self._reevaluate_one_repetition(context):
-                # _reevaluate_one_repetition already reset the
-                # expression, so we can simply abort here.
+                return True
+            if not self._reevaluate_previous_repetition(context):
                 return False
 
-        if self._name != None:
-            context.push_match(self._name, _copykeys(
-                            self._current_repetition, ("start", "end")))
-        return True
-
+    @synchronize_context
     def retry(self, context):
         """Retry children before adding or removing repetitions."""
         initial_repetitions = len(self._current_match)
 
-        if len(self._current_match) == 0:
+        if initial_repetitions == 0:
             if self._greedy:
                 return False
-
-        elif self._reevaluate_one_repetition(context):
+        elif self._reevaluate_previous_repetition(context):
             return True
-
         if initial_repetitions == (self._max_repetitions,
                                    self._min_repetitions)[self._greedy]:
-            # We exhausted every repetition count and match combination.
-            # _reevaluate_one_repetition already cleaned up the context,
-            # so there is nothing left to do here.
             return False
 
-        self._matches.append([])
         # __retry_one_repetition returned False which means that
         # __retry_one_child was executed on each repetition, so
         # all results have been reset. Restore them up to the second
         # last repetition.
-
         if (self._greedy):
             for _ in range(0, initial_repetitions - 1):
                 self._current_match.append(self._matches_once(context))
@@ -384,13 +388,8 @@ class GroupExpression(Expression):
             for _ in range(0, initial_repetitions + 1):
                 match = self._matches_once(context)
                 if match is None:
-                    self.undo(context)
                     return False
                 self._current_match.append(match)
-
-        if self._name is not None:
-            context.override_match(self._name,
-                        _copykeys(self._current_repetition, ("start", "end")))
         return True
 
     def undo(self, context):
@@ -429,11 +428,14 @@ class GroupExpression(Expression):
             return True
 
         if __match_one_child(0):
-            return {"start": self._children[0]._current_match[0]["start"],
-                    "end": self._children[-1]._current_repetition["end"]}
+            if len(self._children[0]._current_match):
+                return {"start": self._children[0]._current_match[0]["start"],
+                        "end": self._children[-1]._current_repetition["end"]}
+            else:
+                return {"start": context.progress, "end": context.progress}
         return None
 
-    def _reevaluate_one_repetition(self, context):
+    def _reevaluate_previous_repetition(self, context):
         """Reevaluate child expressions to find the next valid match.
 
         This method checks whether there is another valid combination of
@@ -487,7 +489,6 @@ class GroupExpression(Expression):
             return False
 
         if not len(self._current_match):
-            self._pop_current_match(context)
             return False
         if __retry_one_child(len(self._children) - 1):
             self._current_repetition = {
@@ -495,7 +496,7 @@ class GroupExpression(Expression):
                 "end": self._children[-1]._current_repetition["end"]}
             return True
         self._current_match.pop()
-        while self._reevaluate_one_repetition(context):
+        while self._reevaluate_previous_repetition(context):
             result = self._matches_once(context)
             if result is not None:
                 self._current_match.append(result)
