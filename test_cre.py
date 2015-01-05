@@ -313,6 +313,15 @@ class TestParser(unittest.TestCase):
             cre.CharacterExpression("c")
         )))
 
+    def test_parsing_of_simple_conjunction(self):
+        self.assertEqual(self.p.parse("(ab)c"), cre.GroupExpression(children=(
+            cre.GroupExpression(children=(
+                cre.CharacterExpression("a"),
+                cre.CharacterExpression("b")
+            )),
+            cre.CharacterExpression("c")
+        )))
+
     def test_resolve_repetitions_handles_all_repetition_indicators(self):
         inf = float("inf")
         assertions = (

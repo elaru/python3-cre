@@ -548,6 +548,10 @@ class Parser:
     def _current_children(self):
         return self._stack[-1]["children"]
 
+    @property
+    def _current(self):
+        return self._stack[-1]
+
     def parse(self, pattern):
         self._context = EvaluationContext(pattern)
         self._stack.append({"state": "root", "children": []})
@@ -611,20 +615,38 @@ class Parser:
 
     def _parse_conjunction(self):
         """Extend or close the current GroupExpression."""
-        if self._context.current_subject_character == ":":
-            capturing = False
-            self._context.progress += 1
+        if (self._current.get("first_time_parsing", True)
+            and GroupExpression(children=(
+                CharacterExpression("?"),
+                CharacterExpression("P"),
+                CharacterExpression("<"),
+                GroupExpression(children=(
+                    CharacterRangeExpression(start="a", end="z",
+                                             max_repetitions=float("inf")),
+                ), name="name"),
+                CharacterExpression(">")
+            )).matches(self._context)):
+            # Search for the pattern "?P<(?P<name>[a-z]+)>" with this
+            # expression object right after the opening parenthesis
+            #
+            # todo: Replace "[a-z]" with "\w" once the
+            #       AnyOfOptionsExpression works.
+            self._current["name"] = self._context.get_match_string("name")
+        self._current["first_time_parsing"] = False
 
         if self._context.current_subject_character == ")":
             if not len(self._current_children):
                 raise Exception("The assigned pattern contains an empty group"
                                 + "at position %s." % self._context.progress)
             self._context.progress += 1
-            args = {"children": self._current_children}
+            args = {"children": self._current_children,
+                    "name": self._current.get("name", None)}
             args.update(self._resolve_repetitions())
-            self._pop_current()
+            self._stack.pop()
             self._current_children.append(GroupExpression(**args))
-            return
+
+        else:
+            self._stack.append({"state": "unknown"})
 
 
     def _parse_disjunction(self):
