@@ -541,69 +541,97 @@ class Parser:
         self._stack = []
 
     @property
-    def _current(self):
-        return self._stack[-1]
+    def _current_state(self):
+        return self._stack[-1]["state"]
 
-    @_current.setter
-    def _current(self, value):
-        self._stack.append(value)
-
-    def _pop_current(self):
-        return self._stack.pop()
+    @property
+    def _current_children(self):
+        return self._stack[-1]["children"]
 
     def parse(self, pattern):
-        if self._context is not None:
-            raise Exception("Parser already in use!")
         self._context = EvaluationContext(pattern)
-        self._current = {"state": "unknown", "children": []}
+        self._stack.append({"state": "root", "children": []})
 
         while self._context.progress < len(pattern):
-            getattr(self, "_parse_" + self._current["state"])()
+            getattr(self, "_parse_" + self._current_state)()
 
         if len(self._stack) > 1:
             raise Exception("More expressions opened than closed")
+
         root = GroupExpression(self._stack.pop()["children"])
         self._context = None
         return root
 
+    def _parse_root(self):
+        """Push unknown state on the stack to keep parsing running."""
+        self._stack.append({"state": "unknown"})
+
     def _parse_unknown(self):
-        """"""
-        if self._context.current_subject_character == "\\":
-            self._current = {"state": "escaped"}
-        elif self._context.current_subject_character == "[":
-            self._current = {"state": "character_group",
-                             "closing_tag": "]"}
-        elif self._context.current_subject_character == "(":
-            self._current = {"state": "group",
-                             "closing_tag": ")"}
+        """Find the appropriate parse_* method for the next character."""
+        self._stack.pop()
+        char = self._context.current_subject_character
+        new_state = {"\\": {"state": "escaped"},
+                     "(" : {"state": "conjunction",
+                            "children": []},
+                     "[" : {"state": "character_group",
+                            "children": []}
+                    }.get(char, None)
+        if new_state is not None:
+            self._context.progress += 1
+            self._stack.append(new_state)
+
+        elif char in ("]", ")"):
+            raise Exception("The character '%s' at position %s closes "
+                            + "a group which was never opened."
+                            % (char, self._context.progress))
+
+        elif char == "|":
+            if not len(self._current_children):
+                raise Exception("The character '|' at position %s creates a "
+                                + "disjunction, but the left expression is "
+                                + "missing." % self._context.progress)
+            self._context.progress += 1
+            self._stack.append({"state": "disjunction",
+                                "children": [self._current_children.pop()]})
+            self._stack.append({"state": "unknown"})
+
         else:
-            self._current = {"state": "character"}
+            self._stack.append({"state": "character"})
 
     def _parse_character(self):
-        """Handle parsing when a character expression was detected."""
+        """Parse the next character as CharacterExpression."""
         args = {"character": self._context.current_subject_character}
         self._context.progress += 1
         args.update(self._resolve_repetitions())
-        self._pop_current()
-        self._current["children"].append(CharacterExpression(**args))
+        self._stack.pop()
+        self._current_children.append(CharacterExpression(**args))
 
     def _parse_character_group(self):
         pass
 
-    def _parse_group(self):
-        if self._context.current_subject_character == ")":
-            self._context.progress += 1
-            args = {"children": self._current["children"]}
-            args.update(self._resolve_repetitions())
-            self._pop_current()
-            self._current["children"].append(GroupExpression(**args))
-            return
+    def _parse_conjunction(self):
+        """Extend or close the current GroupExpression."""
         if self._context.current_subject_character == ":":
             capturing = False
             self._context.progress += 1
 
+        if self._context.current_subject_character == ")":
+            if not len(self._current_children):
+                raise Exception("The assigned pattern contains an empty group"
+                                + "at position %s." % self._context.progress)
+            self._context.progress += 1
+            args = {"children": self._current_children}
+            args.update(self._resolve_repetitions())
+            self._pop_current()
+            self._current_children.append(GroupExpression(**args))
+            return
+
+
+    def _parse_disjunction(self):
+        """Parse the contents of a character group."""
+
     def _parse_escaped(self):
-        """Handle parsing after a backslash was detected.
+        """Parse either a as special sequence or as escaped character.
 
         This method will either create an appropriate expression for
         patterns like "\w" or prepare parsing of the next character as
