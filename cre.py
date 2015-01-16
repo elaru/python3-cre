@@ -26,10 +26,14 @@ def synchronize_context(fn):
     failed. Find a name for the decorator that includes this behaviour!
 
     """
+    def __copykeys(d, k):
+        """Copy key value pairs k from d into a new dict."""
+        return dict(map(lambda x: (x, d[x]), k))
+
     def wrap_matches(obj, context):
         if fn(obj, context):
-            if obj._name is not None:
-                context.push_match(obj._name, _copykeys(
+            if obj._name is not None and obj.has_current_repetition:
+                context.push_match(obj._name, __copykeys(
                         obj._current_repetition, ("start", "end")))
             return True
         if len(obj._current_match):
@@ -39,8 +43,8 @@ def synchronize_context(fn):
 
     def wrap_retry(obj, context):
         if fn(obj, context):
-            if obj._name is not None:
-                context.override_match(obj._name, _copykeys(
+            if obj._name is not None and obj.has_current_repetition:
+                context.override_match(obj._name, __copykeys(
                         obj._current_repetition, ("start", "end")))
             return True
         obj.undo(context)
@@ -155,6 +159,10 @@ class Expression:
     @_current_repetition.setter
     def _current_repetition(self, v):
         self._current_match[-1] = v
+
+    @property
+    def has_current_repetition(self):
+        return len(self._matches) and len(self._current_match)
 
     @synchronize_context
     def matches(self, context):
@@ -431,12 +439,12 @@ class GroupExpression(Expression):
                     return False
             return True
 
+        start = end = context.progress
         if __match_one_child(0):
-            if len(self._children[0]._current_match):
-                return {"start": self._children[0]._current_match[0]["start"],
-                        "end": self._children[-1]._current_repetition["end"]}
-            else:
-                return {"start": context.progress, "end": context.progress}
+            for c in self._children:
+                if c.has_current_repetition:
+                    end = c._current_repetition["end"]
+            return {"start": start, "end": end}
         return None
 
     def _reevaluate_previous_repetition(self, context):
@@ -495,9 +503,13 @@ class GroupExpression(Expression):
         if not len(self._current_match):
             return False
         if __retry_one_child(len(self._children) - 1):
-            self._current_repetition = {
-                "start": self._children[0]._current_match[0]["start"],
-                "end": self._children[-1]._current_repetition["end"]}
+            start = end = context.progress
+            for c in self._children:
+                if c.has_current_repetition:
+                    if c._current_repetition["start"] < start:
+                        start = c._current_repetition["start"]
+                    end = c._current_repetition["end"]
+            self._current_repetition = {"start": start, "end": end}
             return True
         self._current_match.pop()
         while self._reevaluate_previous_repetition(context):
@@ -764,7 +776,3 @@ def matches(pattern, string, flags=0):
 class ParsingOverflowException(Exception):
     """Raised if one tries to read beyond the length of the subject."""
 
-
-def _copykeys(d, k):
-    """Copy key value pairs k from d into a new dict."""
-    return dict(map(lambda x: (x, d[x]), k))

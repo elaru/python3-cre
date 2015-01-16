@@ -137,6 +137,31 @@ class TestCharacterRangeExpression(unittest.TestCase):
         self.c._subject = "a"
         self.assertEqual(e._matches_once(self.c), None)
 
+    def test_named_expression_doesnt_push_match_if_match_is_empty(self):
+        # test correct behaviour in GroupExpression.matches()
+        # pattern := "(?P<foo>b)?b"
+        # subject := "b"
+        c = cre.EvaluationContext("b")
+        e = cre.GroupExpression(
+            (
+                cre.CharacterExpression("a", min_repetitions=0, name="foo"),
+                cre.CharacterExpression("b"),
+            )
+        )
+        self.assertEqual(e.matches(c), True)
+
+        # test correct behaviour in GroupExpression.retry()
+        # pattern := "(?P<foo>b)?b"
+        # subject := "b"
+        c = cre.EvaluationContext("b")
+        e = cre.GroupExpression(
+            (
+                cre.CharacterExpression("b", min_repetitions=0, name="foo"),
+                cre.CharacterExpression("b"),
+            )
+        )
+        self.assertEqual(e.matches(c), True)
+
 
 class TestAnyOfOptionsExpression(unittest.TestCase):
 
@@ -291,6 +316,24 @@ class TestGroupExpression(unittest.TestCase):
                     min_repetitions=2,
                     max_repetitions=float("inf"),
                     greedy=False
+                ),
+                cre.CharacterExpression("b")
+            )
+        )
+        self.assertEqual(e.matches(c), True)
+
+    def test_group_can_handle_expressions_that_dont_match_because_min_repetitions_is_zero(self):
+        """
+        subject := "bb"
+        pattern := "(a?bc?)b"
+        """
+        c = cre.EvaluationContext("bb")
+        e = cre.GroupExpression(
+            (
+                cre.GroupExpression((
+                    cre.CharacterExpression("a", min_repetitions=0),
+                    cre.CharacterExpression("b"),
+                    cre.CharacterExpression("c", min_repetitions=0))
                 ),
                 cre.CharacterExpression("b")
             )
