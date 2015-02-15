@@ -156,11 +156,6 @@ class Expression:
     def _current_repetition(self):
         return self._current_match[-1]
 
-    @_current_repetition.setter
-    def _current_repetition(self, v):
-        # todo: remove this method, it's ambiguous
-        self._current_match[-1] = v
-
     @property
     def has_current_repetition(self):
         # todo: handle this correctly - look at the output of the re
@@ -420,7 +415,7 @@ class AnyOfOptionsExpression(AbstractIteratorExpression):
             if child.has_current_repetition:
                 start = child._current_repetition["start"]
                 end = child._current_repetition["end"]
-            self._current_repetition = {"start": start, "end": end}
+            self._current_match.append({"start": start, "end": end})
             return True
 
         start_child_iteration = current_child_index + 1
@@ -539,6 +534,8 @@ class GroupExpression(AbstractIteratorExpression):
 
         if not len(self._current_match):
             return False
+        self._current_match.pop()
+
         if __retry_one_child(len(self._children) - 1):
             start = end = context.progress
             for c in self._children:
@@ -546,9 +543,9 @@ class GroupExpression(AbstractIteratorExpression):
                     if c._current_repetition["start"] < start:
                         start = c._current_repetition["start"]
                     end = c._current_repetition["end"]
-            self._current_repetition = {"start": start, "end": end}
+            self._current_match.append({"start": start, "end": end})
             return True
-        self._current_match.pop()
+
         while self._reevaluate_previous_repetition(context):
             result = self._matches_once(context)
             if result is not None:
@@ -738,7 +735,6 @@ class Parser:
         """
         minimum, maximum, greedy = 1, 1, True
         inf = float("inf")
-        progress = self._context.progress
 
         if self._context.progress >= len(self._context._subject):
             # The caller already consumed the remaining subject; don't
@@ -791,8 +787,7 @@ class Parser:
                 maximum = int(maximum) if len(maximum) else inf
 
         if (self._context.progress < len(self._context._subject)
-                and self._context.current_subject_character == "?"
-                and progress != self._context.progress):
+                and self._context.current_subject_character == "?"):
             greedy = False
             self._context.progress += 1
 
