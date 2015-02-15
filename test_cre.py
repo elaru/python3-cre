@@ -167,13 +167,13 @@ class TestAnyOfOptionsExpression(unittest.TestCase):
 
     def setUp(self):
         self.c = cre.EvaluationContext("abcd")
-        options = (cre.Expression(), cre.Expression(), cre.Expression())
-        options[0]._matches_once = Mock(side_effect=({"start": 0, "end": 1}, None, None, None))
-        options[1]._matches_once = Mock(side_effect=({"start": 1, "end": 2}, None, None))
-        options[2]._matches_once = Mock(side_effect=({"start": 2, "end": 3}, None))
-        self.e = cre.AnyOfOptionsExpression(options)
+        children = (cre.Expression(), cre.Expression(), cre.Expression())
+        children[0]._matches_once = Mock(side_effect=({"start": 0, "end": 1}, None, None, None))
+        children[1]._matches_once = Mock(side_effect=({"start": 1, "end": 2}, None, None))
+        children[2]._matches_once = Mock(side_effect=({"start": 2, "end": 3}, None))
+        self.e = cre.AnyOfOptionsExpression(children)
 
-    def test_expression_tries_options_in_order(self):
+    def test_expression_tries_children_in_order(self):
         self.assertEqual(self.e.matches(self.c), True)
         self.assertEqual(self.e.matches(self.c), True)
         self.assertEqual(self.e.matches(self.c), True)
@@ -181,13 +181,13 @@ class TestAnyOfOptionsExpression(unittest.TestCase):
         self.assertEqual(self.c._progress, 3)
 
     def test_only_matching_option_changes_state(self):
-        self.e._options[0]._matches_once.side_effect = (None,)
+        self.e._children[0]._matches_once.side_effect = (None,)
         self.e.matches(self.c)
-        self.assertEqual(self.e._options[0]._matches, [])
-        self.assertEqual(self.e._options[1]._matches, [[{"start": 1, "end": 2}]])
-        self.assertEqual(self.e._options[2]._matches, [])
+        self.assertEqual(self.e._children[0]._matches, [])
+        self.assertEqual(self.e._children[1]._matches, [[{"start": 1, "end": 2}]])
+        self.assertEqual(self.e._children[2]._matches, [])
 
-    def test_retry_resets_state_of_all_options(self):
+    def test_retry_resets_state_of_all_children(self):
         """todo: properly define the behaviour of this expression!
         Look at the following examples:
 
@@ -200,27 +200,27 @@ class TestAnyOfOptionsExpression(unittest.TestCase):
         self.e._max_repetitions = 2
         self.assertEqual(self.e.matches(self.c), True)
         self.assertEqual(self.e._matches, [[
-            {"start": 0, "end": 1, "matching_child": self.e._options[0]},
-            {"start": 1, "end": 2, "matching_child": self.e._options[1]}]])
-        self.assertEqual(self.e._options[0]._matches, [[{"start": 0, "end": 1}]])
-        self.assertEqual(self.e._options[1]._matches, [[{"start": 1, "end": 2}]])
-        self.assertEqual(self.e._options[2]._matches, [])
+            {"start": 0, "end": 1, "matching_child": self.e._children[0]},
+            {"start": 1, "end": 2, "matching_child": self.e._children[1]}]])
+        self.assertEqual(self.e._children[0]._matches, [[{"start": 0, "end": 1}]])
+        self.assertEqual(self.e._children[1]._matches, [[{"start": 1, "end": 2}]])
+        self.assertEqual(self.e._children[2]._matches, [])
 
         self.assertEqual(self.e.retry(self.c), True)
         self.assertEqual(self.e._matches, [[{"start": 0, "end": 1}]])
-        self.assertEqual(self.e._options[0]._matches, [[{"start": 0, "end": 1}]])
-        self.assertEqual(self.e._options[1]._matches, [])
-        self.assertEqual(self.e._options[2]._matches, [])
+        self.assertEqual(self.e._children[0]._matches, [[{"start": 0, "end": 1}]])
+        self.assertEqual(self.e._children[1]._matches, [])
+        self.assertEqual(self.e._children[2]._matches, [])
 
         self.assertEqual(self.e.retry(self.c), False)
-        self.assertEqual(self.e._options[0]._matches, [[{"start": 0, "end": 1}]])
-        self.assertEqual(self.e._options[1]._matches, [])
-        self.assertEqual(self.e._options[2]._matches, [])
+        self.assertEqual(self.e._children[0]._matches, [[{"start": 0, "end": 1}]])
+        self.assertEqual(self.e._children[1]._matches, [])
+        self.assertEqual(self.e._children[2]._matches, [])
 
         self.assertEqual(self.e.retry(self.c), False)
-        self.assertEqual(self.e._options[0]._matches, [])
-        self.assertEqual(self.e._options[1]._matches, [])
-        self.assertEqual(self.e._options[2]._matches, [])
+        self.assertEqual(self.e._children[0]._matches, [])
+        self.assertEqual(self.e._children[1]._matches, [])
+        self.assertEqual(self.e._children[2]._matches, [])
 
 
 class TestBackReferenceExpression(unittest.TestCase):

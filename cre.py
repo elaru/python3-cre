@@ -158,10 +158,15 @@ class Expression:
 
     @_current_repetition.setter
     def _current_repetition(self, v):
+        # todo: remove this method, it's ambiguous
         self._current_match[-1] = v
 
     @property
     def has_current_repetition(self):
+        # todo: handle this correctly - look at the output of the re
+        # module for these cases:
+        # - re.match("f(?P<a>a*)oo", "foo").group("a") -> ""
+        # - re.match("f(?P<a>a)*oo", "foo").group("a") -> None
         return len(self._matches) and len(self._current_match)
 
     @synchronize_context
@@ -317,34 +322,8 @@ class CharacterRangeExpression(Expression):
                 + self._repetition_to_string())
 
 
-class AnyOfOptionsExpression(Expression):
-    """Represents a logical-or expression with two or more values.
-
-    This class will be instantiated for
-    the following expression strings:
-    * Two or more expressions concatenated with "|"
-    * Character groups like "[abc]", which will be represented as an
-      option group of  CharacterExpressions or CharacterRangeExpressions
-
-    """
-
-    def __init__(self, options, **kwargs):
-        super().__init__(**kwargs)
-        self._options = options
-
-    def _matches_once(self, context):
-        """Evaluate each option in order until the first one matches."""
-        start = context.progress
-        for o in self._options:
-            if o.matches(context):
-                return {"start": start,
-                        "end": context.progress,
-                        "matching_child": o}
-        return None
-
-
-class GroupExpression(Expression):
-    """Represents and manages a group of expressions, like "(ab|c)". """
+class AbstractIteratorExpression(Expression):
+    """"""
 
     def __init__(self, children, **kwargs):
         super().__init__(**kwargs)
@@ -353,11 +332,6 @@ class GroupExpression(Expression):
     @synchronize_context
     def matches(self, context):
         """Check whether the expression matches in the assigned context.
-
-        GroupExpression overrides this method to handle all possible
-        distributions of characters to its child expressions. See the
-        documentation for examples.
-
         """
         self._matches.append([])
         upper_limit = (self._min_repetitions,
@@ -403,6 +377,69 @@ class GroupExpression(Expression):
                     return False
                 self._current_match.append(match)
         return True
+
+
+class AnyOfOptionsExpression(AbstractIteratorExpression):
+    """Represents a logical-or expression with two or more values.
+
+    This class will be instantiated for
+    the following expression strings:
+    * Two or more expressions concatenated with "|"
+    * Character groups like "[abc]", which will be represented as an
+      option group of  CharacterExpressions or CharacterRangeExpressions
+
+    """
+
+    def undo(self, context):
+        """Undo the children that matched in each repetition."""
+        for m in reversed(self._current_match):
+            self._children[m["matching_child"]].undo(context)
+        super().undo(context)
+
+    def _matches_once(self, context):
+        """Evaluate children in order until one matches."""
+        start = context.progress
+        for i, c in enumerate(self._children):
+            if c.matches(context):
+                return {"start": start,
+                        "end": context.progress,
+                        "matching_child": i}
+        return None
+
+    def _reevaluate_previous_repetition(self, context):
+        """"""
+        if not len(self._current_match):
+            return False
+        self._current_match.pop()
+
+        current_child_index = self._current_repetition["matching_child"]
+        child = self._children[current_child_index]
+        start = end = context.progress
+
+        if child.retry(context):
+            if child.has_current_repetition:
+                start = child._current_repetition["start"]
+                end = child._current_repetition["end"]
+            self._current_repetition = {"start": start, "end": end}
+            return True
+
+        start_child_iteration = current_child_index + 1
+        while True:
+            for i in range(start_child_iteration, len(self._children)):
+                child = self._children[i]
+                if child.matches(context):
+                    if child.has_current_repetition:
+                        start = child._current_repetition["start"]
+                        end = child._current_repetition["end"]
+                    self._current_match.append({"start": start, "end": end})
+                    return True
+            start_child_iteration = 0
+            if not self._reevaluate_previous_repetition(context):
+                return False
+
+
+class GroupExpression(AbstractIteratorExpression):
+    """Represents and manages a group of expressions, like "(ab|c)". """
 
     def undo(self, context):
         """Undo all children, then proceed with default behaviour."""
