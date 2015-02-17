@@ -161,10 +161,6 @@ class Expression:
 
     @property
     def has_current_repetition(self):
-        # todo: handle this correctly - look at the output of the re
-        # module for these cases:
-        # - re.match("f(?P<a>a*)oo", "foo").group("a") -> ""
-        # - re.match("f(?P<a>a)*oo", "foo").group("a") -> None
         return len(self._matches) and len(self._current_match)
 
     @synchronize_context
@@ -337,8 +333,7 @@ class AbstractIteratorExpression(Expression):
                        self._max_repetitions)[self._greedy]
 
         while True:
-            while (context.progress < len(context.subject)
-                   and len(self._current_match) < upper_limit):
+            while len(self._current_match) < upper_limit:
                 match = self._matches_once(context)
                 if match is None:
                     break
@@ -558,10 +553,7 @@ class GroupExpression(AbstractIteratorExpression):
         return False
 
     def __str__(self):
-        print((self._wrap_with_name("%s" if self._names is not None
-                                          else "(%s)")))
-        return (self._wrap_with_name("%s" if self._names is not None
-                                          else "(%s)")
+        return (self._wrap_with_name("%s")
                 % "".join(map(lambda x: str(x), self._children))
                 + self._repetition_to_string())
 

@@ -103,6 +103,34 @@ class TestRepetitionBehaviourWithCharacterExpression(unittest.TestCase):
         e.matches(self.c)
         self.assertEqual(self.c._matches, {})
 
+    def test_match_result_assignment_to_context(self):
+        p = cre.Parser()
+
+        # re.match("(a(b)*)+", "aa").group(2)  -> None
+        c = cre.EvaluationContext("aa")
+        p.parse("(a(b)*)+").matches(c)
+        self.assertEqual(c.flattened_matches,
+            { 0: {"start": 0, "end": 2},
+              1: {"start": 1, "end": 2}})
+
+        # re.match("(a(b)*)+", "aba").group(2) -> 'b'
+        c = cre.EvaluationContext("aba")
+        p.parse("(a(b)*)+").matches(c)
+        self.assertEqual(c.flattened_matches,
+            { 0: {"start": 0, "end": 3},
+              1: {"start": 2, "end": 3},
+              2: {"start": 1, "end": 2}})
+
+        # re.match("(a(b*))+", "aba").group(2) -> ''
+        c = cre.EvaluationContext("aba")
+        e = p.parse("(a(b*))+")
+        e._children[0]._children[1].foo = 1
+        e.matches(c)
+        self.assertEqual(c.flattened_matches,
+            { 0: {"start": 0, "end": 3},
+              1: {"start": 2, "end": 3},
+              2: {"start": 3, "end": 3}})
+
 
 class TestCharacterExpression(unittest.TestCase):
 
