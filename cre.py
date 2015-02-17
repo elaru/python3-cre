@@ -32,8 +32,8 @@ def synchronize_context(fn):
 
     def wrap_matches(obj, context):
         if fn(obj, context):
-            if obj._name is not None and obj.has_current_repetition:
-                context.push_match(obj._name, __copykeys(
+            if obj._names is not None and obj.has_current_repetition:
+                context.push_match(obj._names, __copykeys(
                         obj._current_repetition, ("start", "end")))
             return True
         if len(obj._current_match):
@@ -43,8 +43,8 @@ def synchronize_context(fn):
 
     def wrap_retry(obj, context):
         if fn(obj, context):
-            if obj._name is not None and obj.has_current_repetition:
-                context.override_match(obj._name, __copykeys(
+            if obj._names is not None and obj.has_current_repetition:
+                context.override_match(obj._names, __copykeys(
                         obj._current_repetition, ("start", "end")))
             return True
         obj.undo(context)
@@ -104,16 +104,19 @@ class EvaluationContext:
     def matches(self):
         return self._matches
 
-    def push_match(self, name, value):
-        self._matches.setdefault(name, []).append(value)
+    def push_match(self, names, value):
+        for n in names:
+            self._matches.setdefault(n, []).append(value)
 
-    def override_match(self, name, value):
-        self._matches[name][-1] = value
+    def override_match(self, names, value):
+        for n in names:
+            self._matches[n][-1] = value
 
-    def pop_match(self, name):
-        self._matches[name].pop()
-        if not len(self._matches[name]):
-            del self._matches[name]
+    def pop_match(self, names):
+        for n in names:
+            self._matches[n].pop()
+            if not len(self._matches[n]):
+                del self._matches[n]
 
     @property
     def flattened_matches(self):
@@ -141,11 +144,11 @@ class Expression:
     """
 
     def __init__(self, min_repetitions=1, max_repetitions=1,
-                 greedy=True, name=None):
+                 greedy=True, names=None):
         self._min_repetitions = min_repetitions
         self._max_repetitions = max_repetitions
         self._greedy = greedy
-        self._name = name
+        self._names = tuple(names) if names is not None else None
         self._matches = []
 
     @property
@@ -169,8 +172,7 @@ class Expression:
         """Check whether the expression matches in the assigned context.
 
         Add every match result to self._matches for later use and update
-        the context progress. If the expression has a name, update the
-        context to store the last match.
+        the context progress.
         Return True if the expression matches, else False.
 
         """
@@ -219,7 +221,7 @@ class Expression:
         else:
             match = self._matches_once(context)
             if match is not None:
-                self._matches[-1].append(match)
+                self._current_match.append(match)
                 context.progress = match["end"]
             else:
                 return False
@@ -229,8 +231,8 @@ class Expression:
         """Undo the last match with all repetitions."""
         if len(self._current_match):
             context.progress = self._current_match[0]["start"]
-        if self._name is not None:
-            context.pop_match(self._name)
+        if self._names is not None:
+            context.pop_match(self._names)
         self._matches.pop()
 
     def _matches_once(self, context):
@@ -247,9 +249,11 @@ class Expression:
 
     def _wrap_with_name(self, v):
         """Helper method for __str__; wrap v with name reference."""
-        if self._name is not None:
-            return "(?P<%s>%s)" % (str(self._name), v)
-        return v
+        if self._names is None:
+            return v
+        for name in filter(lambda x: type(x) is str, self._names):
+            return "(?P<%s>%s)" % (name, v)
+        return "(%s)" % v
 
     def _repetition_to_string(self):
         """Helper method for __str__; build repetition string."""
@@ -554,7 +558,9 @@ class GroupExpression(AbstractIteratorExpression):
         return False
 
     def __str__(self):
-        return (self._wrap_with_name("%s" if self._name is not None
+        print((self._wrap_with_name("%s" if self._names is not None
+                                          else "(%s)")))
+        return (self._wrap_with_name("%s" if self._names is not None
                                           else "(%s)")
                 % "".join(map(lambda x: str(x), self._children))
                 + self._repetition_to_string())
@@ -585,6 +591,7 @@ class Parser:
     def __init__(self):
         self._context = None
         self._stack = []
+        self._group_count = 1
 
     @property
     def _current_state(self):
@@ -600,6 +607,7 @@ class Parser:
 
     def parse(self, pattern):
         self._context = EvaluationContext(pattern)
+        self._group_count = 1
         self._stack.append({"state": "root", "children": []})
 
         while self._context.progress < len(pattern):
@@ -608,7 +616,7 @@ class Parser:
         if len(self._stack) > 1:
             raise Exception("More expressions opened than closed")
 
-        root = GroupExpression(self._stack.pop()["children"])
+        root = GroupExpression(self._stack.pop()["children"], names=(0,))
         self._context = None
         return root
 
@@ -622,7 +630,8 @@ class Parser:
         char = self._context.current_subject_character
         new_state = {"\\": {"state": "escaped"},
                      "(" : {"state": "conjunction",
-                            "children": []},
+                            "children": [],
+                            "first_time_parsing": True},
                      "[" : {"state": "character_group",
                             "children": []}
                     }.get(char, None)
@@ -661,24 +670,27 @@ class Parser:
 
     def _parse_conjunction(self):
         """Extend or close the current GroupExpression."""
-        if (self._current.get("first_time_parsing", True)
-            and GroupExpression(children=(
-                CharacterExpression("?"),
-                CharacterExpression("P"),
-                CharacterExpression("<"),
-                GroupExpression(children=(
-                    CharacterRangeExpression(start="a", end="z",
-                                             max_repetitions=float("inf")),
-                ), name="name"),
-                CharacterExpression(">")
-            )).matches(self._context)):
-            # Search for the pattern "?P<(?P<name>[a-z]+)>" with this
-            # expression object right after the opening parenthesis
-            #
-            # todo: Replace "[a-z]" with "\w" once the
-            #       AnyOfOptionsExpression works.
-            self._current["name"] = self._context.get_match_string("name")
-        self._current["first_time_parsing"] = False
+        if self._current["first_time_parsing"]:
+            self._current["first_time_parsing"] = False
+            self._current["names"] = [self._group_count]
+            self._group_count += 1
+            if GroupExpression(children=(
+                    CharacterExpression("?"),
+                    CharacterExpression("P"),
+                    CharacterExpression("<"),
+                    GroupExpression(children=(
+                        CharacterRangeExpression(start="a", end="z",
+                                                 max_repetitions=float("inf")),
+                    ), names=("name",)),
+                    CharacterExpression(">")
+                )).matches(self._context):
+                # Search for the pattern "?P<(?P<name>[a-z]+)>" with this
+                # expression object right after the opening parenthesis
+                #
+                # todo: Replace "[a-z]" with "\w" once the
+                #       AnyOfOptionsExpression works.
+                self._current["names"].append(
+                    self._context.get_match_string("name"))
 
         if self._context.current_subject_character == ")":
             if not len(self._current_children):
@@ -686,7 +698,7 @@ class Parser:
                                 + "at position %s." % self._context.progress)
             self._context.progress += 1
             args = {"children": self._current_children,
-                    "name": self._current.get("name", None)}
+                    "names": self._current["names"]}
             args.update(self._resolve_repetitions())
             self._stack.pop()
             self._current_children.append(GroupExpression(**args))
@@ -760,7 +772,7 @@ class Parser:
                     CharacterExpression(character="{"),
                     GroupExpression((CharacterRangeExpression(start="0",
                                                 end="9",max_repetitions=inf),),
-                                    name="repetition"),
+                                    names=("repetition",)),
                     CharacterExpression("}"))
              ).matches(self._context):
                 minimum = maximum = int(
@@ -772,13 +784,13 @@ class Parser:
                                     (CharacterRangeExpression(start="0",
                                         end="9", min_repetitions=0,
                                         max_repetitions=inf),),
-                                    name="min"),
+                                    names=("min",)),
                               CharacterExpression(","),
                               GroupExpression(
                                     (CharacterRangeExpression(start="0",
                                         end="9", min_repetitions=0,
                                         max_repetitions=inf),),
-                                    name="max"),
+                                    names=("max",)),
                               CharacterExpression("}"))
              ).matches(self._context):
                 minimum = self._context.get_match_string("min")

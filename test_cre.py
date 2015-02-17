@@ -12,7 +12,7 @@ class TestRepetitionBehaviourWithCharacterExpression(unittest.TestCase):
 
     def test_matches_updates_context(self):
         self.c._subject = "a" * 8
-        e = cre.CharacterExpression("a", name="foo")
+        e = cre.CharacterExpression("a", names=("foo",))
         e.matches(self.c)
         self.assertEqual(self.c._progress, 1)
 
@@ -57,7 +57,7 @@ class TestRepetitionBehaviourWithCharacterExpression(unittest.TestCase):
     def test_retry_greedy_iterates_down_to_min_repetitions(self):
         self.c._progress = 5
         e = cre.CharacterExpression("a", min_repetitions=2,
-                                    max_repetitions=4, name="foo")
+                                    max_repetitions=4, names=("foo",))
         e._matches = [[
             {"start": 0, "end": 1},
             {"start": 1, "end": 2},
@@ -80,7 +80,7 @@ class TestRepetitionBehaviourWithCharacterExpression(unittest.TestCase):
     def test_retry_nongreedy_iterates_up_to_max_repetitions(self):
         e = cre.CharacterExpression("a", min_repetitions=1,
                                     max_repetitions=3,
-                                    greedy=False, name="foo")
+                                    greedy=False, names=("foo",))
         self.c._subject = "a" * 8
         e.matches(self.c)
 
@@ -144,7 +144,7 @@ class TestCharacterRangeExpression(unittest.TestCase):
         c = cre.EvaluationContext("b")
         e = cre.GroupExpression(
             (
-                cre.CharacterExpression("a", min_repetitions=0, name="foo"),
+                cre.CharacterExpression("a", min_repetitions=0, names=("foo",)),
                 cre.CharacterExpression("b"),
             )
         )
@@ -156,7 +156,7 @@ class TestCharacterRangeExpression(unittest.TestCase):
         c = cre.EvaluationContext("b")
         e = cre.GroupExpression(
             (
-                cre.CharacterExpression("b", min_repetitions=0, name="foo"),
+                cre.CharacterExpression("b", min_repetitions=0, names=("foo",)),
                 cre.CharacterExpression("b"),
             )
         )
@@ -354,16 +354,16 @@ class TestParser(unittest.TestCase):
             cre.CharacterExpression("a"),
             cre.CharacterExpression("b"),
             cre.CharacterExpression("c")
-        )))
+        ), names=(0,)))
 
     def test_parsing_of_simple_conjunction(self):
         self.assertEqual(self.p.parse("(ab)c"), cre.GroupExpression(children=(
             cre.GroupExpression(children=(
                 cre.CharacterExpression("a"),
                 cre.CharacterExpression("b")
-            )),
+            ), names=(1,)),
             cre.CharacterExpression("c")
-        )))
+        ), names=(0,)))
 
     def test_resolve_repetitions_handles_all_repetition_indicators(self):
         inf = float("inf")
