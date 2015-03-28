@@ -19,11 +19,11 @@ code**.
 Usage
 -----
 
-Yet to come.
+cre adapts the re module API
 
 
-Examples
---------
+Extending cre
+-------------
 
 To understand the difficulties you encounter when parsing a string with regex,
 consider the work that has to be done by the algorithm:
@@ -38,11 +38,13 @@ Therefore, every expression will initially consume as many characters of the
 subject as possible (or as few, if the expression is nongreedy). Then, if a
 later expression can't match the subject anymore, all previous matches have to
 be rollbacked and reevaluated with fewer (or more) repetitions to find a valid
-distribution.
+distribution of characters.
 
 The following section describes various use cases one has to consider when
 evaluating regular expressions. The examples are ordered by complexity. Look
 at the third example for an illustration.
+
+Read more at: http://swtch.com/~rsc/regexp/regexp1.html
 
 
 ### Reevaluating a single previous expression #1
